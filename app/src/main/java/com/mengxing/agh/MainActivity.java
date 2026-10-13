@@ -3,6 +3,7 @@ package com.mengxing.agh;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -36,15 +37,7 @@ public class MainActivity extends Activity {
         "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
-    public static final String VERSION = "0.0.3";
-
-    // 品牌色
-    private static final int C_BG_TOP = 0xFF0B1410;
-    private static final int C_BG_BOT = 0xFF12281F;
-    private static final int C_ACCENT = 0xFF2F7D5B;
-    private static final int C_ACCENT2 = 0xFF7C9F69;
-    private static final int C_TEXT = 0xFFF2F7F4;
-    private static final int C_SUB = 0xFF9FB3A8;
+    public static final String VERSION = "0.0.4";
 
     private WebView web;
     private SwipeRefreshLayout swipe;
@@ -54,9 +47,21 @@ public class MainActivity extends Activity {
     private View settingsFab;
     private boolean offline = false;
     private SharedPreferences prefs;
-    private String theme;
+    private String prefTheme;
 
-    /** JS 桥：页面(polyfill)上报主题色，壳同步状态栏/导航栏，消除"浏览器感" */
+    // —— 配色跟随系统深色模式 ——
+    private boolean isNight() {
+        int m = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return m == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    private int cBgTop()  { return isNight() ? 0xFF0B1410 : 0xFFF6F7F9; }
+    private int cBgBot()  { return isNight() ? 0xFF12281F : 0xFFEDF1EE; }
+    private int cText()   { return isNight() ? 0xFFF2F7F4 : 0xFF111827; }
+    private int cSub()    { return isNight() ? 0xFF9FB3A8 : 0xFF6B7280; }
+    private int cAccent() { return isNight() ? 0xFF7C9F69 : 0xFF2F7D5B; }
+
+    /** JS 桥：页面(polyfill)上报主题色，壳同步状态栏/导航栏 */
     public class NativeBridge {
         @android.webkit.JavascriptInterface
         public void setChrome(String bgHexOrRgb, String dark) {
@@ -104,19 +109,19 @@ public class MainActivity extends Activity {
 
     private GradientDrawable brandBg() {
         return new GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM, new int[]{C_BG_TOP, C_BG_BOT});
+            GradientDrawable.Orientation.TOP_BOTTOM, new int[]{cBgTop(), cBgBot()});
     }
 
-    /** 注入固定 color-scheme：让 WebView 内容不随系统深色模式变化 */
+    /** 注入跟随系统的 color-scheme：让 AGH 网页随手机深色模式切换 */
     private void injectColorScheme() {
-        String scheme = SettingsActivity.THEME_LIGHT.equals(theme) ? "light" : "dark";
+        String scheme = isNight() ? "dark" : "light";
         String js = "(function(){var id='yuno-scheme';var s=document.getElementById(id);"
             + "if(!s){s=document.createElement('style');s.id=id;document.head.appendChild(s);}"
             + "s.textContent='html{color-scheme:" + scheme + " !important;}';})();";
         try { web.evaluateJavascript(js, null); } catch (Exception ignored) {}
     }
 
-    /** 原生闪屏 */
+    /** 原生闪屏（配色跟随系统） */
     private View buildSplash() {
         FrameLayout frame = new FrameLayout(this);
         frame.setBackground(brandBg());
@@ -133,7 +138,7 @@ public class MainActivity extends Activity {
 
         TextView title = new TextView(this);
         title.setText("YunoAgent");
-        title.setTextColor(C_TEXT);
+        title.setTextColor(cText());
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
@@ -141,7 +146,7 @@ public class MainActivity extends Activity {
 
         TextView sub = new TextView(this);
         sub.setText("你的随身 AGH · Agent on the go");
-        sub.setTextColor(C_SUB);
+        sub.setTextColor(cSub());
         sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         sub.setGravity(Gravity.CENTER);
         sub.setPadding(0, dp(8), 0, 0);
@@ -152,7 +157,7 @@ public class MainActivity extends Activity {
         rp.topMargin = dp(28);
         ring.setLayoutParams(rp);
         ring.setIndeterminateTintList(
-            android.content.res.ColorStateList.valueOf(C_ACCENT2));
+            android.content.res.ColorStateList.valueOf(cAccent()));
 
         center.addView(icon);
         center.addView(title);
@@ -166,7 +171,7 @@ public class MainActivity extends Activity {
 
         TextView ver = new TextView(this);
         ver.setText("v" + VERSION);
-        ver.setTextColor(C_SUB);
+        ver.setTextColor(cSub());
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         ver.setGravity(Gravity.CENTER);
         FrameLayout.LayoutParams vp = new FrameLayout.LayoutParams(
@@ -178,7 +183,7 @@ public class MainActivity extends Activity {
         return frame;
     }
 
-    /** 原生离线视图 */
+    /** 原生离线视图（配色跟随系统） */
     private View buildOffline() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -194,7 +199,7 @@ public class MainActivity extends Activity {
 
         TextView title = new TextView(this);
         title.setText("连不上 YunoAgent");
-        title.setTextColor(C_TEXT);
+        title.setTextColor(cText());
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
@@ -202,7 +207,7 @@ public class MainActivity extends Activity {
 
         TextView desc = new TextView(this);
         desc.setText("手机上的 Tailscale 好像不在线。\n先打开 Tailscale（VPN 开关）再重试。");
-        desc.setTextColor(C_SUB);
+        desc.setTextColor(cSub());
         desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         desc.setGravity(Gravity.CENTER);
         desc.setLineSpacing(0, 1.5f);
@@ -214,7 +219,7 @@ public class MainActivity extends Activity {
         retry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(24));
-        bg.setColor(C_ACCENT);
+        bg.setColor(cAccent());
         retry.setBackground(bg);
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(200), dp(48));
         bp.gravity = Gravity.CENTER_HORIZONTAL;
@@ -242,12 +247,12 @@ public class MainActivity extends Activity {
     private View buildSettingsFab() {
         TextView fab = new TextView(this);
         fab.setText("⚙");
-        fab.setTextColor(C_TEXT);
+        fab.setTextColor(cText());
         fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         fab.setGravity(Gravity.CENTER);
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
-        g.setColor(0x6614231C);
+        g.setColor(isNight() ? 0x6614231C : 0x66FFFFFF);
         fab.setBackground(g);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(36), dp(36));
         lp.gravity = Gravity.TOP | Gravity.END;
@@ -267,10 +272,10 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         prefs = getSharedPreferences(SettingsActivity.PREFS, MODE_PRIVATE);
-        theme = prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_DARK);
+        prefTheme = prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_SYSTEM);
 
-        getWindow().setStatusBarColor(C_BG_TOP);
-        getWindow().setNavigationBarColor(C_BG_TOP);
+        getWindow().setStatusBarColor(cBgTop());
+        getWindow().setNavigationBarColor(cBgTop());
 
         FrameLayout root = new FrameLayout(this);
 
@@ -281,9 +286,9 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
-        // 配色固定：不随系统深色模式变化
+        // 不强制深色，让 AGH 网页跟随系统深色模式
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            s.setForceDark(WebSettings.FORCE_DARK_OFF);
+            s.setForceDark(WebSettings.FORCE_DARK_AUTO);
         }
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -358,7 +363,7 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         progress.setLayoutParams(pl);
         progress.getProgressDrawable().setColorFilter(
-            C_ACCENT2, android.graphics.PorterDuff.Mode.SRC_IN);
+            cAccent(), android.graphics.PorterDuff.Mode.SRC_IN);
         progress.setVisibility(View.GONE);
 
         splash = buildSplash();

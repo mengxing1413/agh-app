@@ -2,6 +2,7 @@ package com.mengxing.agh;
 
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
@@ -14,20 +15,19 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
- * 原生设置页：参考 iOS 卡片式设置范式。
- * 配色在 App 内固定，不随系统深色模式变化。
+ * 原生设置页。配色默认跟随系统深色模式，也可手动固定。
  */
 public class SettingsActivity extends Activity {
 
     public static final String PREFS = "yuno_prefs";
     public static final String KEY_THEME = "theme";
-    public static final String THEME_DARK = "dark";   // 品牌深绿（默认）
-    public static final String THEME_LIGHT = "light"; // 浅色
+    public static final String THEME_SYSTEM = "system"; // 跟随系统（默认）
+    public static final String THEME_LIGHT = "light";
+    public static final String THEME_DARK = "dark";
 
     private SharedPreferences prefs;
     private String theme;
 
-    // 当前主题色
     private int bg, cardBg, border, textColor, subColor, selBg, selBorder, accent;
 
     private int dp(int v) {
@@ -35,15 +35,23 @@ public class SettingsActivity extends Activity {
             getResources().getDisplayMetrics());
     }
 
+    private boolean isNight() {
+        int m = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return m == Configuration.UI_MODE_NIGHT_YES;
+    }
+
     private void applyThemeColors() {
-        if (THEME_LIGHT.equals(theme)) {
-            bg = 0xFFF6F7F9; cardBg = 0xFFFFFFFF; border = 0xFFE5E7EB;
-            textColor = 0xFF111827; subColor = 0xFF6B7280;
-            selBg = 0xFFF0F0FF; selBorder = 0xFF2563EB; accent = 0xFF2563EB;
-        } else {
+        boolean night = isNight();
+        if (THEME_LIGHT.equals(theme)) night = false;
+        else if (THEME_DARK.equals(theme)) night = true;
+        if (night) {
             bg = 0xFF0B1410; cardBg = 0xFF14231C; border = 0xFF24382F;
             textColor = 0xFFF2F7F4; subColor = 0xFF9FB3A8;
             selBg = 0xFF173D2E; selBorder = 0xFF7C9F69; accent = 0xFF7C9F69;
+        } else {
+            bg = 0xFFF6F7F9; cardBg = 0xFFFFFFFF; border = 0xFFE5E7EB;
+            textColor = 0xFF111827; subColor = 0xFF6B7280;
+            selBg = 0xFFF0F0FF; selBorder = 0xFF2563EB; accent = 0xFF2563EB;
         }
     }
 
@@ -56,7 +64,6 @@ public class SettingsActivity extends Activity {
         return t;
     }
 
-    /** 单选卡片：圆角边框 + 选中态 */
     private LinearLayout optionCard(String title, String desc, boolean selected, View.OnClickListener click) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
@@ -84,7 +91,6 @@ public class SettingsActivity extends Activity {
         return row;
     }
 
-    /** 分组卡片（白/深底 + 圆角 + 分组标题） */
     private LinearLayout group(String title, View... children) {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
@@ -116,7 +122,7 @@ public class SettingsActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        theme = prefs.getString(KEY_THEME, THEME_DARK);
+        theme = prefs.getString(KEY_THEME, THEME_SYSTEM);
         applyThemeColors();
 
         getWindow().setStatusBarColor(bg);
@@ -130,38 +136,29 @@ public class SettingsActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), dp(12), dp(20), dp(32));
 
-        // 顶部：标题 + 关闭
+        // 顶部
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        top.setLayoutParams(tlp);
-
-        TextView title = tv("设置", 22, textColor, true);
-        top.addView(title);
-
+        top.addView(tv("设置", 22, textColor, true));
         View spacer = new View(this);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, 0);
-        slp.weight = 1;
-        spacer.setLayoutParams(slp);
+        slp.weight = 1; spacer.setLayoutParams(slp);
         top.addView(spacer);
-
         TextView close = tv("✕", 22, subColor, false);
         close.setPadding(dp(12), dp(6), dp(4), dp(6));
         close.setOnClickListener(v -> finish());
         top.addView(close);
         root.addView(top);
 
-        // 功能入口（占位，真功能在 AGH 主界面）
+        // 功能入口（占位）
         LinearLayout entryGrid = new LinearLayout(this);
         entryGrid.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         glp.topMargin = dp(18);
         entryGrid.setLayoutParams(glp);
-        String[] entries = {"模型与账户", "技能", "插件管理", "MCP"};
-        for (String e : entries) {
+        for (String e : new String[]{"模型与账户", "技能", "插件管理", "MCP"}) {
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setGravity(Gravity.CENTER);
@@ -180,31 +177,29 @@ public class SettingsActivity extends Activity {
         }
         root.addView(entryGrid);
 
-        // 配色（固定，不随系统）
+        // 配色（默认跟随系统）
         root.addView(group("配色",
-            optionCard("浅色", "固定浅色，不随系统深色模式变化",
+            optionCard("跟随系统", "随手机深色模式自动切换（推荐）",
+                THEME_SYSTEM.equals(theme), v -> setThemeAndRecreate(THEME_SYSTEM)),
+            optionCard("浅色", "固定浅色，不随系统变化",
                 THEME_LIGHT.equals(theme), v -> setThemeAndRecreate(THEME_LIGHT)),
-            optionCard("品牌深绿", "YunoAgent 默认配色，固定不变",
+            optionCard("品牌深绿", "固定深绿，不随系统变化",
                 THEME_DARK.equals(theme), v -> setThemeAndRecreate(THEME_DARK))
         ));
 
-        // 皮肤
         root.addView(group("皮肤",
             optionCard("默认", "标准视觉", true, v -> {}),
             optionCard("极简", "敬请期待", false, v -> {})
         ));
 
-        // 字号
         root.addView(group("字号",
             optionCard("标准", "", true, v -> {}),
             optionCard("大", "敬请期待", false, v -> {})
         ));
 
-        // 关于
-        LinearLayout about = group("关于",
+        root.addView(group("关于",
             optionCard("YunoAgent", "v" + MainActivity.VERSION + " · 你的随身 AGH", false, v -> {})
-        );
-        root.addView(about);
+        ));
 
         scroll.addView(root);
         setContentView(scroll);

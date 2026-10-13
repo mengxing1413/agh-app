@@ -1,0 +1,10 @@
+<resources>
+    <!-- 深色模式（跟随系统） -->
+    <style name="Theme.AGH" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B1410</item>
+        <item name="android:navigationBarColor">#0B1410</item>
+        <item name="android:windowBackground">#0B1410</item>
+        <item name="android:colorAccent">#7C9F69</item>
+        <item name="android:textColorPrimary">#F2F7F4</item>
+    </style>
+</resources>

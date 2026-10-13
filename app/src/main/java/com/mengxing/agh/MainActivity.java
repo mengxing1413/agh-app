@@ -6,7 +6,10 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
 import android.webkit.HttpAuthHandler;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -14,21 +17,73 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.ProgressBar;
+import android.widget.Toast;
+
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends Activity {
     private static final String START_URL =
         "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
+
     private WebView web;
+    private SwipeRefreshLayout swipe;
+    private ProgressBar progress;
     private boolean offline = false;
+
+    /** JS 桥：页面(polyfill)上报主题色，壳同步状态栏/导航栏，消除"浏览器感" */
+    public class NativeBridge {
+        @android.webkit.JavascriptInterface
+        public void setChrome(String bgHexOrRgb, String dark) {
+            runOnUiThread(() -> applyChrome(bgHexOrRgb, "1".equals(dark)));
+        }
+    }
+
+    private void applyChrome(String bg, boolean dark) {
+        try {
+            int c = Color.parseColor(normalizeColor(bg));
+            boolean light = !dark; // 浅色页面 → 深色状态栏图标
+            getWindow().setStatusBarColor(c);
+            getWindow().setNavigationBarColor(c);
+            View decor = getWindow().getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (light) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                else flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                decor.setSystemUiVisibility(flags);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static String normalizeColor(String s) {
+        if (s == null) return "#FFFFFF";
+        s = s.trim();
+        if (s.startsWith("rgb")) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\\d+").matcher(s);
+            int[] v = new int[3]; int i = 0;
+            while (m.find() && i < 3) v[i++] = Integer.parseInt(m.group());
+            return String.format("#%02X%02X%02X", v[0], v[1], v[2]);
+        }
+        if (s.startsWith("#") && s.length() == 4) {
+            return "#" + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2)
+                     + s.charAt(3) + s.charAt(3);
+        }
+        return s;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setStatusBarColor(Color.parseColor("#0E1512"));
+            getWindow().setStatusBarColor(Color.WHITE);
         }
+
+        FrameLayout root = new FrameLayout(this);
+
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -39,8 +94,21 @@ public class MainActivity extends Activity {
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
+        web.addJavascriptInterface(new NativeBridge(), "AGHNative");
 
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                progress.setProgress(newProgress);
+                progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
+            }
+        });
+
+        web.setDownloadListener((url, userAgent, contentDisposition, mimetype, length) -> {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+            catch (Exception ignored) {}
+        });
+
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler,
@@ -66,14 +134,37 @@ public class MainActivity extends Activity {
                                         WebResourceError error) {
                 if (request.isForMainFrame()) showOffline();
             }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                swipe.setRefreshing(false);
+            }
         });
 
-        setContentView(web);
+        swipe = new SwipeRefreshLayout(this);
+        swipe.addView(web, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        swipe.setOnRefreshListener(() -> web.reload());
+
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        progress.setLayoutParams(pl);
+        progress.getProgressDrawable().setColorFilter(
+            Color.parseColor("#2F7D5B"), android.graphics.PorterDuff.Mode.SRC_IN);
+        progress.setVisibility(View.GONE);
+
+        root.addView(swipe, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(progress, pl);
+        setContentView(root);
         web.loadUrl(START_URL);
     }
 
     private void showOffline() {
         offline = true;
+        swipe.setRefreshing(false);
+        progress.setVisibility(View.GONE);
         web.loadDataWithBaseURL(null,
             "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
             + "<style>body{background:#0E1512;color:#E8EFEA;font-family:sans-serif;display:flex;"

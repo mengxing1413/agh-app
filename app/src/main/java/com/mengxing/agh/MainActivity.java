@@ -2,6 +2,7 @@ package com.mengxing.agh;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -35,7 +36,7 @@ public class MainActivity extends Activity {
         "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
-    private static final String VERSION = "0.0.2";
+    public static final String VERSION = "0.0.3";
 
     // 品牌色
     private static final int C_BG_TOP = 0xFF0B1410;
@@ -50,7 +51,10 @@ public class MainActivity extends Activity {
     private ProgressBar progress;
     private View splash;
     private View offlineView;
+    private View settingsFab;
     private boolean offline = false;
+    private SharedPreferences prefs;
+    private String theme;
 
     /** JS 桥：页面(polyfill)上报主题色，壳同步状态栏/导航栏，消除"浏览器感" */
     public class NativeBridge {
@@ -99,12 +103,20 @@ public class MainActivity extends Activity {
     }
 
     private GradientDrawable brandBg() {
-        GradientDrawable g = new GradientDrawable(
+        return new GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM, new int[]{C_BG_TOP, C_BG_BOT});
-        return g;
     }
 
-    /** 原生闪屏：品牌图标 + 字标 + 加载转圈 + 版本号 */
+    /** 注入固定 color-scheme：让 WebView 内容不随系统深色模式变化 */
+    private void injectColorScheme() {
+        String scheme = SettingsActivity.THEME_LIGHT.equals(theme) ? "light" : "dark";
+        String js = "(function(){var id='yuno-scheme';var s=document.getElementById(id);"
+            + "if(!s){s=document.createElement('style');s.id=id;document.head.appendChild(s);}"
+            + "s.textContent='html{color-scheme:" + scheme + " !important;}';})();";
+        try { web.evaluateJavascript(js, null); } catch (Exception ignored) {}
+    }
+
+    /** 原生闪屏 */
     private View buildSplash() {
         FrameLayout frame = new FrameLayout(this);
         frame.setBackground(brandBg());
@@ -166,7 +178,7 @@ public class MainActivity extends Activity {
         return frame;
     }
 
-    /** 原生离线视图：替代之前的 WebView loadData，真正的原生 View */
+    /** 原生离线视图 */
     private View buildOffline() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -204,8 +216,7 @@ public class MainActivity extends Activity {
         bg.setCornerRadius(dp(24));
         bg.setColor(C_ACCENT);
         retry.setBackground(bg);
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
-            dp(200), dp(48));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(200), dp(48));
         bp.gravity = Gravity.CENTER_HORIZONTAL;
         bp.topMargin = dp(28);
         retry.setLayoutParams(bp);
@@ -227,9 +238,36 @@ public class MainActivity extends Activity {
         return root;
     }
 
+    /** 右上角悬浮设置按钮 */
+    private View buildSettingsFab() {
+        TextView fab = new TextView(this);
+        fab.setText("⚙");
+        fab.setTextColor(C_TEXT);
+        fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        fab.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(0x6614231C);
+        fab.setBackground(g);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(36), dp(36));
+        lp.gravity = Gravity.TOP | Gravity.END;
+        lp.topMargin = dp(14);
+        lp.rightMargin = dp(14);
+        fab.setLayoutParams(lp);
+        fab.setOnClickListener(v -> openSettings());
+        return fab;
+    }
+
+    private void openSettings() {
+        startActivity(new Intent(this, SettingsActivity.class));
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        prefs = getSharedPreferences(SettingsActivity.PREFS, MODE_PRIVATE);
+        theme = prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_DARK);
 
         getWindow().setStatusBarColor(C_BG_TOP);
         getWindow().setNavigationBarColor(C_BG_TOP);
@@ -243,6 +281,10 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
+        // 配色固定：不随系统深色模式变化
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            s.setForceDark(WebSettings.FORCE_DARK_OFF);
+        }
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
@@ -300,6 +342,7 @@ public class MainActivity extends Activity {
                     splash.setVisibility(View.GONE);
                     offlineView.setVisibility(View.GONE);
                     swipe.setVisibility(View.VISIBLE);
+                    injectColorScheme();
                 }
             }
         });
@@ -321,6 +364,7 @@ public class MainActivity extends Activity {
         splash = buildSplash();
         offlineView = buildOffline();
         offlineView.setVisibility(View.GONE);
+        settingsFab = buildSettingsFab();
 
         root.addView(swipe, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -328,6 +372,7 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(splash, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(settingsFab);
         root.addView(progress, pl);
         setContentView(root);
 

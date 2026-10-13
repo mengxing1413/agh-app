@@ -5,5 +5,7 @@
         <item name="android:windowBackground">#0B1410</item>
         <item name="android:colorAccent">#2F7D5B</item>
         <item name="android:textColorPrimary">#F2F7F4</item>
+        <!-- 固定配色，不随系统深色模式变化 -->
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

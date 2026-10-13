@@ -3,9 +3,13 @@ package com.mengxing.agh;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -17,9 +21,12 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.Toast;
+import android.widget.TextView;
 
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
@@ -28,10 +35,21 @@ public class MainActivity extends Activity {
         "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
+    private static final String VERSION = "0.0.2";
+
+    // 品牌色
+    private static final int C_BG_TOP = 0xFF0B1410;
+    private static final int C_BG_BOT = 0xFF12281F;
+    private static final int C_ACCENT = 0xFF2F7D5B;
+    private static final int C_ACCENT2 = 0xFF7C9F69;
+    private static final int C_TEXT = 0xFFF2F7F4;
+    private static final int C_SUB = 0xFF9FB3A8;
 
     private WebView web;
     private SwipeRefreshLayout swipe;
     private ProgressBar progress;
+    private View splash;
+    private View offlineView;
     private boolean offline = false;
 
     /** JS 桥：页面(polyfill)上报主题色，壳同步状态栏/导航栏，消除"浏览器感" */
@@ -45,7 +63,7 @@ public class MainActivity extends Activity {
     private void applyChrome(String bg, boolean dark) {
         try {
             int c = Color.parseColor(normalizeColor(bg));
-            boolean light = !dark; // 浅色页面 → 深色状态栏图标
+            boolean light = !dark;
             getWindow().setStatusBarColor(c);
             getWindow().setNavigationBarColor(c);
             View decor = getWindow().getDecorView();
@@ -75,12 +93,146 @@ public class MainActivity extends Activity {
         return s;
     }
 
+    private int dp(int v) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
+            getResources().getDisplayMetrics());
+    }
+
+    private GradientDrawable brandBg() {
+        GradientDrawable g = new GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM, new int[]{C_BG_TOP, C_BG_BOT});
+        return g;
+    }
+
+    /** 原生闪屏：品牌图标 + 字标 + 加载转圈 + 版本号 */
+    private View buildSplash() {
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(brandBg());
+
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.mipmap.ic_launcher);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(120), dp(120));
+        ip.gravity = Gravity.CENTER_HORIZONTAL;
+        icon.setLayoutParams(ip);
+
+        TextView title = new TextView(this);
+        title.setText("YunoAgent");
+        title.setTextColor(C_TEXT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(18), 0, 0);
+
+        TextView sub = new TextView(this);
+        sub.setText("你的随身 AGH · Agent on the go");
+        sub.setTextColor(C_SUB);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        sub.setGravity(Gravity.CENTER);
+        sub.setPadding(0, dp(8), 0, 0);
+
+        ProgressBar ring = new ProgressBar(this);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        rp.gravity = Gravity.CENTER_HORIZONTAL;
+        rp.topMargin = dp(28);
+        ring.setLayoutParams(rp);
+        ring.setIndeterminateTintList(
+            android.content.res.ColorStateList.valueOf(C_ACCENT2));
+
+        center.addView(icon);
+        center.addView(title);
+        center.addView(sub);
+        center.addView(ring);
+
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cp.gravity = Gravity.CENTER;
+        frame.addView(center, cp);
+
+        TextView ver = new TextView(this);
+        ver.setText("v" + VERSION);
+        ver.setTextColor(C_SUB);
+        ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        ver.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams vp = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        vp.gravity = Gravity.BOTTOM;
+        vp.bottomMargin = dp(28);
+        frame.addView(ver, vp);
+
+        return frame;
+    }
+
+    /** 原生离线视图：替代之前的 WebView loadData，真正的原生 View */
+    private View buildOffline() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setBackground(brandBg());
+        root.setPadding(dp(32), dp(32), dp(32), dp(32));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.mipmap.ic_launcher);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(96), dp(96));
+        ip.gravity = Gravity.CENTER_HORIZONTAL;
+        icon.setLayoutParams(ip);
+
+        TextView title = new TextView(this);
+        title.setText("连不上 YunoAgent");
+        title.setTextColor(C_TEXT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(20), 0, 0);
+
+        TextView desc = new TextView(this);
+        desc.setText("手机上的 Tailscale 好像不在线。\n先打开 Tailscale（VPN 开关）再重试。");
+        desc.setTextColor(C_SUB);
+        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        desc.setGravity(Gravity.CENTER);
+        desc.setLineSpacing(0, 1.5f);
+        desc.setPadding(dp(16), dp(12), dp(16), 0);
+
+        Button retry = new Button(this);
+        retry.setText("重新连接");
+        retry.setTextColor(Color.WHITE);
+        retry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(24));
+        bg.setColor(C_ACCENT);
+        retry.setBackground(bg);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
+            dp(200), dp(48));
+        bp.gravity = Gravity.CENTER_HORIZONTAL;
+        bp.topMargin = dp(28);
+        retry.setLayoutParams(bp);
+        retry.setOnClickListener(v -> {
+            offline = false;
+            offlineView.setVisibility(View.GONE);
+            swipe.setVisibility(View.VISIBLE);
+            web.loadUrl(START_URL);
+        });
+
+        root.addView(icon);
+        root.addView(title);
+        root.addView(desc);
+        root.addView(retry);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        root.setLayoutParams(lp);
+        return root;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setStatusBarColor(Color.WHITE);
-        }
+
+        getWindow().setStatusBarColor(C_BG_TOP);
+        getWindow().setNavigationBarColor(C_BG_TOP);
 
         FrameLayout root = new FrameLayout(this);
 
@@ -121,7 +273,13 @@ public class MainActivity extends Activity {
                 Uri u = request.getUrl();
                 String scheme = u.getScheme() == null ? "" : u.getScheme();
                 String host = u.getHost() == null ? "" : u.getHost();
-                if (scheme.equals("retry")) { offline = false; view.loadUrl(START_URL); return true; }
+                if (scheme.equals("retry")) {
+                    offline = false;
+                    offlineView.setVisibility(View.GONE);
+                    swipe.setVisibility(View.VISIBLE);
+                    view.loadUrl(START_URL);
+                    return true;
+                }
                 if (scheme.startsWith("http") && !host.endsWith("tail6125f3.ts.net")) {
                     try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) {}
                     return true;
@@ -138,6 +296,11 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 swipe.setRefreshing(false);
+                if (!offline) {
+                    splash.setVisibility(View.GONE);
+                    offlineView.setVisibility(View.GONE);
+                    swipe.setVisibility(View.VISIBLE);
+                }
             }
         });
 
@@ -145,19 +308,29 @@ public class MainActivity extends Activity {
         swipe.addView(web, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         swipe.setOnRefreshListener(() -> web.reload());
+        swipe.setVisibility(View.GONE);
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         progress.setLayoutParams(pl);
         progress.getProgressDrawable().setColorFilter(
-            Color.parseColor("#2F7D5B"), android.graphics.PorterDuff.Mode.SRC_IN);
+            C_ACCENT2, android.graphics.PorterDuff.Mode.SRC_IN);
         progress.setVisibility(View.GONE);
+
+        splash = buildSplash();
+        offlineView = buildOffline();
+        offlineView.setVisibility(View.GONE);
 
         root.addView(swipe, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(offlineView, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(splash, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(progress, pl);
         setContentView(root);
+
         web.loadUrl(START_URL);
     }
 
@@ -165,22 +338,19 @@ public class MainActivity extends Activity {
         offline = true;
         swipe.setRefreshing(false);
         progress.setVisibility(View.GONE);
-        web.loadDataWithBaseURL(null,
-            "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + "<style>body{background:#0E1512;color:#E8EFEA;font-family:sans-serif;display:flex;"
-            + "flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0}"
-            + "h2{font-size:20px}p{color:#9FB3A8;font-size:14px;line-height:1.6;text-align:center;padding:0 24px}"
-            + "a{display:inline-block;margin-top:16px;padding:10px 28px;border-radius:24px;"
-            + "background:#2F7D5B;color:#fff;text-decoration:none;font-size:15px}</style></head><body>"
-            + "<h2>连不上 AGH</h2>"
-            + "<p>手机上的 Tailscale 好像不在线。<br/>先打开 Tailscale（VPN 开关）再重试。</p>"
-            + "<a href='retry://reload'>重新连接</a></body></html>",
-            "text/html", "utf-8", null);
+        splash.setVisibility(View.GONE);
+        offlineView.setVisibility(View.VISIBLE);
+        swipe.setVisibility(View.GONE);
     }
 
     @Override
     public void onBackPressed() {
-        if (offline) { offline = false; web.loadUrl(START_URL); }
+        if (offline) {
+            offline = false;
+            offlineView.setVisibility(View.GONE);
+            swipe.setVisibility(View.VISIBLE);
+            web.loadUrl(START_URL);
+        }
         else if (web.canGoBack()) web.goBack();
         else super.onBackPressed();
     }

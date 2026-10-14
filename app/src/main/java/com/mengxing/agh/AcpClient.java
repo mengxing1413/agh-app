@@ -40,6 +40,23 @@ public class AcpClient {
         }
     }
 
+    /** 会话元信息（SessionMeta，来自 _agnes/v1/session.list）。 */
+    public static class SessionInfo {
+        public final String sessionId, title, cwd, createdAt;
+        public SessionInfo(String sessionId, String title, String cwd, String createdAt) {
+            this.sessionId = sessionId;
+            this.title = title;
+            this.cwd = cwd;
+            this.createdAt = createdAt;
+        }
+    }
+
+    /** session.list 回调。 */
+    public interface SessionsCb {
+        void onResult(List<SessionInfo> sessions, String next);
+        void onError(String msg);
+    }
+
     public interface Listener {
         void onConnected();
         void onMessageChunk(String text);
@@ -52,6 +69,10 @@ public class AcpClient {
                               String rawInput, String rawOutput);
         /** 权限请求：reqId 是服务端请求的 JSON-RPC id，回包必须原样带回。 */
         void onPermissionRequest(Object reqId, String title, List<PermOption> options);
+        /** 历史回放：用户消息分片（user_message_chunk）。 */
+        void onUserMessage(String text);
+        /** 会话加载完成（session/load 返回）。 */
+        void onSessionLoaded(String sessionId);
         void onPromptDone(String stopReason);
         void onError(String msg);
         void onClosed();
@@ -66,6 +87,8 @@ public class AcpClient {
     private int nextId = 1;
     private final Map<Integer, RespCb> pending = new HashMap<>();
     private String sessionId;
+    /** 最近一次 workspace.list 得到的有效 cwd，供 session/load 回退使用。 */
+    private String defaultCwd;
 
     // —— 重连状态 ——
     private String url, user, pass;
@@ -191,7 +214,10 @@ public class AcpClient {
             JSONObject u = p.optJSONObject("update");
             if (u == null) return;
             String kind = u.optString("sessionUpdate", "");
-            if ("agent_message_chunk".equals(kind)) {
+            if ("user_message_chunk".equals(kind)) {
+                String text = extractText(u);
+                if (!text.isEmpty()) notifyUserMessage(text);
+            } else if ("agent_message_chunk".equals(kind)) {
                 String text = extractText(u);
                 if (!text.isEmpty()) notifyChunk(text);
             } else if ("agent_message".equals(kind)) {
@@ -300,6 +326,61 @@ public class AcpClient {
         } catch (Exception e) { notifyError(e.getMessage()); }
     }
 
+    /**
+     * 列出历史会话（_agnes/v1/session.list）。
+     * params: SessionListParams { q?, cursor?, limit? }（additionalProperties:false，只传合法字段）
+     * result: PageSessionMeta { items:[SessionMeta], next? }
+     */
+    public void listSessions(SessionsCb cb) {
+        try {
+            JSONObject params = new JSONObject();
+            params.put("limit", 100);
+            request("_agnes/v1/session.list", params, new RespCb() {
+                public void onResult(JSONObject result) {
+                    List<SessionInfo> list = new ArrayList<>();
+                    JSONArray items = result.optJSONArray("items");
+                    if (items != null) {
+                        for (int i = 0; i < items.length(); i++) {
+                            JSONObject o = items.optJSONObject(i);
+                            if (o == null) continue;
+                            list.add(new SessionInfo(
+                                o.optString("sessionId", ""),
+                                o.optString("title", ""),
+                                o.optString("cwd", ""),
+                                o.optString("createdAt", "")));
+                        }
+                    }
+                    String next = result.optString("next", "");
+                    if (cb != null) cb.onResult(list, next);
+                }
+                public void onError(String msg) { if (cb != null) cb.onError(msg); }
+            });
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /**
+     * 加载历史会话（ACP session/load）：服务端会通过 session/update 流式重放全部历史消息。
+     * params: LoadSessionRequest { mcpServers*, cwd*, sessionId* }
+     */
+    public void loadSession(String sid, String cwd) {
+        if (sid == null || sid.isEmpty()) { notifyError("会话 id 无效"); return; }
+        try {
+            String useCwd = (cwd != null && !cwd.isEmpty())
+                ? cwd : (defaultCwd != null ? defaultCwd : ".");
+            JSONObject params = new JSONObject();
+            params.put("sessionId", sid);
+            params.put("cwd", useCwd);
+            params.put("mcpServers", new JSONArray());
+            request("session/load", params, new RespCb() {
+                public void onResult(JSONObject result) {
+                    sessionId = sid;   // 后续 prompt 打到该会话
+                    notifySessionLoaded(sid);
+                }
+                public void onError(String msg) { notifyError("加载会话失败：" + msg); }
+            });
+        } catch (Exception e) { notifyError(e.getMessage()); }
+    }
+
     public void newSession(String cwd) {
         // 先查已注册 workspace，取有效 path 做 cwd（传 "." 会被 SEMANTIC_REJECTED）
         request("_agnes/v1/workspace.list", new JSONObject(), new RespCb() {
@@ -310,6 +391,7 @@ public class AcpClient {
                     JSONObject first = items.optJSONObject(0);
                     if (first != null) path = first.optString("path", null);
                 }
+                if (path != null) defaultCwd = path;
                 doNewSession(path != null ? path : (cwd == null ? "." : cwd));
             }
             public void onError(String msg) {
@@ -380,6 +462,8 @@ public class AcpClient {
     private void notifyPermission(Object id, String ti, List<PermOption> opts) {
         main.post(() -> { if (listener != null) listener.onPermissionRequest(id, ti, opts); });
     }
+    private void notifyUserMessage(String t) { main.post(() -> { if (listener != null) listener.onUserMessage(t); }); }
+    private void notifySessionLoaded(String sid) { main.post(() -> { if (listener != null) listener.onSessionLoaded(sid); }); }
     private void notifyPromptDone(String s) { main.post(() -> { if (listener != null) listener.onPromptDone(s); }); }
     private void notifyError(String m) { main.post(() -> { if (listener != null) listener.onError(m); }); }
     private void notifyClosed() { main.post(() -> { if (listener != null) listener.onClosed(); }); }

@@ -1,6 +1,7 @@
 package com.mengxing.agh;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -23,6 +24,10 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import io.noties.markwon.Markwon;
+import io.noties.markwon.ext.tables.TablePlugin;
 
 import java.util.HashMap;
 import java.util.List;
@@ -55,7 +60,10 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
     private Button sendBtn;
     private TextView streamBubble;
     private StringBuilder streamBuf = new StringBuilder();
+    private TextView userStreamBubble;               // 历史回放：聚合连续 user_message_chunk
+    private final StringBuilder userStreamBuf = new StringBuilder();
     private TextView statusView;
+    private Markwon markwon;
 
     // 工具卡片索引（toolCallId → 卡片）
     private final Map<String, ToolCard> toolCards = new HashMap<>();
@@ -103,6 +111,10 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        markwon = Markwon.builder(this)
+            .usePlugin(TablePlugin.create(this))
+            .build();
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(cBg());
@@ -130,6 +142,13 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         statusView = tv("连接中…", 11, cSub(), false);
         titleBox.addView(statusView);
         top.addView(titleBox);
+
+        Button sessionsBtn = new Button(this);
+        sessionsBtn.setText("☰");
+        sessionsBtn.setTextColor(cText());
+        sessionsBtn.setBackgroundColor(Color.TRANSPARENT);
+        sessionsBtn.setOnClickListener(v -> showSessionList());
+        top.addView(sessionsBtn);
 
         Button workbenchBtn = new Button(this);
         workbenchBtn.setText("🖥");
@@ -220,6 +239,8 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         addUserBubble(text);
         input.setText("");
         streamBuf.setLength(0);
+        userStreamBuf.setLength(0);
+        userStreamBubble = null;
         lastAgentText = "";
         acp.prompt(text);
     }
@@ -234,9 +255,25 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
 
     private void addAgentBubble(String text) {
         LinearLayout wrap = bubbleWrap(Gravity.START);
-        wrap.addView(makeBubble(text, cAgentBubble(), cText()));
+        TextView b = makeBubble("", cAgentBubble(), cText());
+        renderMarkdown(b, text);
+        wrap.addView(b);
         messages.addView(wrap);
         scrollToBottom();
+    }
+
+    /** 用 Markwon 渲染 Markdown；失败时回落为纯文本。 */
+    private void renderMarkdown(TextView t, String md) {
+        if (t == null) return;
+        String src = (md == null) ? "" : md;
+        if (markwon != null) {
+            try {
+                markwon.setMarkdown(t, src);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        t.setText(src);
     }
 
     private LinearLayout bubbleWrap(int gravity) {
@@ -361,6 +398,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         card.setOnClickListener(v -> {
             c.expanded = !c.expanded;
             c.body.setVisibility(c.expanded ? View.VISIBLE : View.GONE);
+            refreshToolCard(c);
             scrollToBottom();
         });
         c.card = card;
@@ -369,7 +407,10 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
 
     private void refreshToolCard(ToolCard c) {
         String title = TextUtils.isEmpty(c.title) ? "工具调用" : c.title;
-        c.header.setText(toolKindIcon(c.kind) + " " + statusIcon(c.status) + "  " + title);
+        // 一次性拼好 header（含展开箭头）；旧实现基于已含箭头的文本再追加，会叠成 "▸ ▸ ▸"
+        boolean hasDetail = !TextUtils.isEmpty(c.rawInput) || !TextUtils.isEmpty(c.rawOutput);
+        String arrow = hasDetail ? (c.expanded ? "  ▾" : "  ▸") : "";
+        c.header.setText(toolKindIcon(c.kind) + " " + statusIcon(c.status) + "  " + title + arrow);
         c.header.setTextColor(statusColor(c.status));
 
         StringBuilder b = new StringBuilder();
@@ -378,9 +419,6 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         if (!TextUtils.isEmpty(c.rawInput)) b.append("\n\n参数：\n").append(c.rawInput);
         if (!TextUtils.isEmpty(c.rawOutput)) b.append("\n\n结果：\n").append(c.rawOutput);
         c.body.setText(b.toString());
-
-        boolean hasDetail = !TextUtils.isEmpty(c.rawInput) || !TextUtils.isEmpty(c.rawOutput);
-        c.header.setText(c.header.getText() + (hasDetail ? (c.expanded ? "  ▾" : "  ▸") : ""));
     }
 
     // ===================== 审批卡片 =====================
@@ -548,6 +586,70 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         foreground = false;
     }
 
+    // ===================== 会话列表 / 历史 =====================
+
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+    }
+
+    /** 时间显示：兼容 ISO-8601（2026-10-14T03:42:57Z）与 epoch 毫秒。 */
+    private String formatTime(String iso) {
+        if (TextUtils.isEmpty(iso)) return "";
+        try {
+            if (iso.matches("\\d+")) {
+                long ms = Long.parseLong(iso);
+                return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",
+                    java.util.Locale.getDefault()).format(new java.util.Date(ms));
+            }
+            String s = iso.replace("T", " ").replace("Z", "");
+            if (s.length() >= 16) s = s.substring(0, 16);
+            return s;
+        } catch (Exception e) { return iso; }
+    }
+
+    private void showSessionList() {
+        if (acp == null) return;
+        acp.listSessions(new AcpClient.SessionsCb() {
+            @Override public void onResult(List<AcpClient.SessionInfo> sessions, String next) {
+                if (sessions == null || sessions.isEmpty()) {
+                    toast("暂无历史会话");
+                    return;
+                }
+                final String[] labels = new String[sessions.size()];
+                for (int i = 0; i < sessions.size(); i++) {
+                    AcpClient.SessionInfo s = sessions.get(i);
+                    String t = TextUtils.isEmpty(s.title) ? "(无标题)" : s.title;
+                    String time = formatTime(s.createdAt);
+                    labels[i] = t + (TextUtils.isEmpty(time) ? "" : ("\n" + time));
+                }
+                new AlertDialog.Builder(ChatActivity.this)
+                    .setTitle("历史会话")
+                    .setItems(labels, (d, which) -> {
+                        AcpClient.SessionInfo s = sessions.get(which);
+                        switchSession(s.sessionId, s.cwd);
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            }
+            @Override public void onError(String msg) {
+                toast("获取会话失败：" + msg);
+            }
+        });
+    }
+
+    /** 切换到历史会话：清空当前视图，再让服务端重放历史（session/update）。 */
+    private void switchSession(String sid, String cwd) {
+        if (acp == null) return;
+        messages.removeAllViews();
+        streamBubble = null;
+        streamBuf.setLength(0);
+        userStreamBubble = null;
+        userStreamBuf.setLength(0);
+        toolCards.clear();
+        lastAgentText = "";
+        acp.loadSession(sid, cwd);
+    }
+
     // ===================== AcpClient.Listener =====================
 
     @Override public void onConnected() {
@@ -557,7 +659,30 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         acp.newSession(".");
     }
 
+    @Override public void onUserMessage(String text) {
+        // 历史回放（session/load）：把连续的 user_message_chunk 聚合成一个用户气泡
+        streamBubble = null;          // 结束上一段 agent 输出
+        streamBuf.setLength(0);
+        if (userStreamBubble == null) {
+            LinearLayout wrap = bubbleWrap(Gravity.END);
+            userStreamBubble = makeBubble("", cUserBubble(), Color.WHITE);
+            wrap.addView(userStreamBubble);
+            messages.addView(wrap);
+            userStreamBuf.setLength(0);
+        }
+        userStreamBuf.append(text);
+        userStreamBubble.setText(userStreamBuf.toString());
+        scrollToBottom();
+    }
+
+    @Override public void onSessionLoaded(String sessionId) {
+        statusView.setText("已连接 · 历史会话");
+        statusView.setTextColor(cAccent());
+    }
+
     @Override public void onMessageChunk(String text) {
+        userStreamBubble = null;     // 进入 agent 输出，结束当前用户消息聚合
+        userStreamBuf.setLength(0);
         if (streamBubble == null) {
             LinearLayout wrap = bubbleWrap(Gravity.START);
             streamBubble = makeBubble("", cAgentBubble(), cText());
@@ -572,7 +697,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
 
     @Override public void onAgentMessage(String text) {
         if (streamBubble != null) {
-            streamBubble.setText(text);
+            renderMarkdown(streamBubble, text);
             streamBubble = null;
             streamBuf.setLength(0);
         } else {

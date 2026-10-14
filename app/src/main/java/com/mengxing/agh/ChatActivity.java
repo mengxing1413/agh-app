@@ -96,6 +96,14 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         titleBox.addView(statusView);
         top.addView(titleBox);
 
+        Button workbenchBtn = new Button(this);
+        workbenchBtn.setText("🖥");
+        workbenchBtn.setTextColor(cText());
+        workbenchBtn.setBackgroundColor(Color.TRANSPARENT);
+        workbenchBtn.setOnClickListener(v ->
+            startActivity(new android.content.Intent(this, MainActivity.class)));
+        top.addView(workbenchBtn);
+
         Button settingsBtn = new Button(this);
         settingsBtn.setText("⚙");
         settingsBtn.setTextColor(cText());

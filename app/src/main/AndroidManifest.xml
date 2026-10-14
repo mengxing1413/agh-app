@@ -10,10 +10,10 @@
         android:hardwareAccelerated="true"
         android:theme="@style/Theme.AGH">
 
+        <!-- 原生对话页 = App 首页（ChatGPT 范式：打开即对话） -->
         <activity
-            android:name=".MainActivity"
+            android:name=".ChatActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -21,16 +21,18 @@
             </intent-filter>
         </activity>
 
+        <!-- AGH web 工作台（从对话页标题栏进入） -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:label="工作台"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:label="设置"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode" />
-
-        <activity
-            android:name=".ChatActivity"
-            android:exported="false"
-            android:label="对话"
-            android:windowSoftInputMode="adjustResize" />
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
     </application>
 </manifest>

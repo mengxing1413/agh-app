@@ -65,12 +65,12 @@ class SettingsActivity : ComponentActivity() {
 private fun SettingsScreen(onClose: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
-    var theme by remember { mutableStateOf(prefs.getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM) }
+    val prefs = remember { ctx.getSharedPreferences(SettingsActivity.PREFS, Context.MODE_PRIVATE) }
+    var theme by remember { mutableStateOf(prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_SYSTEM) ?: SettingsActivity.THEME_SYSTEM) }
 
     fun setTheme(t: String) {
         theme = t
-        prefs.edit().putString(KEY_THEME, t).apply()
+        prefs.edit().putString(SettingsActivity.KEY_THEME, t).apply()
         (ctx as? ComponentActivity)?.recreate()
     }
 

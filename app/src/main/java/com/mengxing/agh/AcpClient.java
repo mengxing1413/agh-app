@@ -89,6 +89,8 @@ public class AcpClient {
     private String sessionId;
     /** 最近一次 workspace.list 得到的有效 cwd，供 session/load 回退使用。 */
     private String defaultCwd;
+    /** 当前会话使用的模型/预设名（尽力解析，可能为 null）。 */
+    private volatile String modelName;
 
     // —— 重连状态 ——
     private String url, user, pass;
@@ -107,6 +109,7 @@ public class AcpClient {
 
     public void setListener(Listener l) { this.listener = l; }
     public String getSessionId() { return sessionId; }
+    public String getModelName() { return modelName; }
 
     // —— 连接 / 重连 ——
     public void connect(String url, String user, String pass) {
@@ -294,6 +297,28 @@ public class AcpClient {
         } catch (JSONException e) { notifyError(e.getMessage()); }
     }
 
+    /** 从 session/new|load 的返回里尽力解析当前模型/预设名；解析不到返回 null。 */
+    private String parseModel(JSONObject result) {
+        if (result == null) return null;
+        String m = result.optString("model", "");
+        if (!m.isEmpty()) return m;
+        JSONArray opts = result.optJSONArray("configOptions");
+        if (opts != null) {
+            for (int i = 0; i < opts.length(); i++) {
+                JSONObject o = opts.optJSONObject(i);
+                if (o == null) continue;
+                String tag = (o.optString("id", "") + o.optString("name", "")).toLowerCase();
+                if (tag.contains("model")) {
+                    String v = o.optString("currentValue", "");
+                    if (v.isEmpty()) v = o.optString("currentValueId", "");
+                    if (v.isEmpty()) v = o.optString("currentValueLabel", "");
+                    if (!v.isEmpty()) return v;
+                }
+            }
+        }
+        return null;
+    }
+
     private String extractText(JSONObject update) {
         JSONObject content = update.optJSONObject("content");
         if (content != null) {
@@ -374,6 +399,7 @@ public class AcpClient {
             request("session/load", params, new RespCb() {
                 public void onResult(JSONObject result) {
                     sessionId = sid;   // 后续 prompt 打到该会话
+                    modelName = parseModel(result);
                     notifySessionLoaded(sid);
                 }
                 public void onError(String msg) { notifyError("加载会话失败：" + msg); }
@@ -408,6 +434,7 @@ public class AcpClient {
             request("session/new", params, new RespCb() {
                 public void onResult(JSONObject result) {
                     sessionId = result.optString("sessionId", null);
+                    modelName = parseModel(result);
                 }
                 public void onError(String msg) { notifyError("创建会话失败：" + msg); }
             });

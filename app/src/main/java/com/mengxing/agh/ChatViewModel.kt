@@ -11,12 +11,19 @@ import java.util.concurrent.atomic.AtomicLong
 sealed interface ChatItem {
     val key: String
 
-    data class UserBubble(override val key: String, val text: String) : ChatItem
+    data class UserBubble(
+        override val key: String,
+        val text: String,
+        val time: String = ""
+    ) : ChatItem
 
     data class AgentBubble(
         override val key: String,
         val text: String,
-        val done: Boolean
+        val done: Boolean,
+        val time: String = "",
+        val model: String? = null,
+        val elapsedMs: Long? = null
     ) : ChatItem
 
     data class ToolCard(
@@ -77,6 +84,8 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     private var userEchoKey: String? = null          // 历史回放中聚合的用户气泡
     private var historyMode = false                  // 是否处于历史加载回放
     private var lastAgentText = ""
+    private var lastAgentKey: String? = null         // 本轮最近一条 agent 气泡（补耗时用）
+    private var sendStartMs = 0L                     // 本轮 prompt 发出时刻
 
     init {
         acp.setListener(this)
@@ -92,12 +101,15 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         userEchoKey = null
         streamingAgentKey = null
         lastAgentText = ""
+        lastAgentKey = null
+        sendStartMs = System.currentTimeMillis()
         val key = "u" + ids.incrementAndGet()
-        _state.update { it.copy(items = it.items + ChatItem.UserBubble(key, t)) }
+        _state.update { it.copy(items = it.items + ChatItem.UserBubble(key, t, clock())) }
         acp.prompt(t)
     }
 
     fun openSession(sid: String, cwd: String) {
+        lastAgentKey = null
         historyMode = true
         streamingAgentKey = null
         userEchoKey = null
@@ -140,6 +152,10 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         }
     }
 
+    private fun clock(): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(System.currentTimeMillis()))
+
     override fun onCleared() {
         acp.close()
         super.onCleared()
@@ -161,8 +177,10 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         if (k == null) {
             val nk = "a" + ids.incrementAndGet()
             streamingAgentKey = nk
-            _state.update { it.copy(items = it.items + ChatItem.AgentBubble(nk, text, false)) }
+            lastAgentKey = nk
+            _state.update { it.copy(items = it.items + ChatItem.AgentBubble(nk, text, false, clock())) }
         } else {
+            lastAgentKey = k
             _state.update { s ->
                 s.copy(items = s.items.map { item ->
                     if (item is ChatItem.AgentBubble && item.key == k) item.copy(text = item.text + text)
@@ -175,6 +193,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     override fun onAgentMessage(text: String) {
         val k = streamingAgentKey
         if (k != null) {
+            lastAgentKey = k
             _state.update { s ->
                 s.copy(items = s.items.map { item ->
                     if (item is ChatItem.AgentBubble && item.key == k) item.copy(text = text, done = true)
@@ -184,7 +203,8 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
             streamingAgentKey = null
         } else {
             val nk = "a" + ids.incrementAndGet()
-            _state.update { it.copy(items = it.items + ChatItem.AgentBubble(nk, text, true)) }
+            lastAgentKey = nk
+            _state.update { it.copy(items = it.items + ChatItem.AgentBubble(nk, text, true, clock())) }
         }
         if (lastAgentText.isEmpty()) lastAgentText = text
     }
@@ -236,13 +256,24 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     }
 
     override fun onPromptDone(stopReason: String) {
-        val k = streamingAgentKey ?: return
-        _state.update { s ->
-            s.copy(items = s.items.map { item ->
-                if (item is ChatItem.AgentBubble && item.key == k) item.copy(done = true) else item
-            })
+        val k = streamingAgentKey ?: lastAgentKey
+        val elapsed = if (sendStartMs > 0L) System.currentTimeMillis() - sendStartMs else 0L
+        val model = acp.modelName
+        if (k != null) {
+            _state.update { s ->
+                s.copy(items = s.items.map { item ->
+                    if (item is ChatItem.AgentBubble && item.key == k)
+                        item.copy(
+                            done = true,
+                            model = item.model ?: model,
+                            elapsedMs = if (elapsed > 0L) elapsed else item.elapsedMs
+                        )
+                    else item
+                })
+            }
         }
         streamingAgentKey = null
+        sendStartMs = 0L
     }
 
     override fun onError(msg: String) {

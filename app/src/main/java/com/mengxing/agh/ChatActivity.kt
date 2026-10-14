@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -157,7 +159,13 @@ private fun YunoTopBar(
             Box(
                 Modifier.size(38.dp).clip(CircleShape).background(cs.primary),
                 contentAlignment = Alignment.Center
-            ) { Text("🐹", fontSize = 20.sp) }
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_hamster),
+                    contentDescription = "YunoAgent",
+                    modifier = Modifier.size(38.dp).clip(CircleShape)
+                )
+            }
 
             Spacer(Modifier.width(11.dp))
 
@@ -214,10 +222,11 @@ private fun EmptyState(onPick: (String) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            Modifier.size(88.dp).clip(CircleShape).background(cs.primary),
-            contentAlignment = Alignment.Center
-        ) { Text("🐹", fontSize = 44.sp) }
+        Image(
+            painter = painterResource(R.drawable.ic_hamster),
+            contentDescription = "YunoAgent",
+            modifier = Modifier.size(96.dp).clip(CircleShape)
+        )
 
         Spacer(Modifier.height(20.dp))
         Text(
@@ -267,7 +276,7 @@ private fun MessageList(
     ) {
         items(state.items, key = { it.key }) { item ->
             when (item) {
-                is ChatItem.UserBubble -> UserBubbleRow(item.text)
+                is ChatItem.UserBubble -> UserBubbleRow(item)
                 is ChatItem.AgentBubble -> AgentBubbleRow(item)
                 is ChatItem.ToolCard -> ToolCardView(item)
                 is ChatItem.PermissionCard ->
@@ -278,19 +287,28 @@ private fun MessageList(
 }
 
 @Composable
-private fun UserBubbleRow(text: String) {
+private fun UserBubbleRow(item: ChatItem.UserBubble) {
     val cs = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         Surface(
             color = cs.primary,
             shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp),
             modifier = Modifier.widthIn(max = 300.dp)
         ) {
             Text(
-                text,
+                item.text,
                 Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 color = cs.onPrimary,
                 style = MaterialTheme.typography.bodyLarge
+            )
+        }
+        if (item.time.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                item.time,
+                style = MaterialTheme.typography.labelSmall,
+                color = cs.onSurfaceVariant,
+                modifier = Modifier.padding(end = 4.dp)
             )
         }
     }
@@ -304,22 +322,48 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.Top
     ) {
-        Box(
-            Modifier.size(30.dp).clip(CircleShape).background(cs.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) { Text("🐹", fontSize = 15.sp) }
+        Image(
+            painter = painterResource(R.drawable.ic_hamster),
+            contentDescription = "YunoAgent",
+            modifier = Modifier.size(30.dp).clip(CircleShape)
+        )
 
         Spacer(Modifier.width(8.dp))
 
-        Surface(
-            color = cs.surface,
-            shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
-            border = BorderStroke(1.dp, cs.outlineVariant),
-            modifier = Modifier.widthIn(max = 300.dp)
-        ) {
-            MarkdownText(item.text, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+        Column(Modifier.widthIn(max = 300.dp)) {
+            Surface(
+                color = cs.surface,
+                shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
+                border = BorderStroke(1.dp, cs.outlineVariant)
+            ) {
+                MarkdownText(item.text, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+            }
+            val meta = agentMeta(item)
+            if (meta.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = cs.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
         }
     }
+}
+
+private fun agentMeta(item: ChatItem.AgentBubble): String {
+    val parts = mutableListOf<String>()
+    if (item.time.isNotEmpty()) parts.add(item.time)
+    if (!item.model.isNullOrEmpty()) parts.add(item.model)
+    if (item.done) {
+        item.elapsedMs?.let {
+            parts.add("用时 " + java.lang.String.format(java.util.Locale.US, "%.1f", it / 1000.0) + " 秒")
+        }
+    } else {
+        parts.add("生成中…")
+    }
+    return parts.joinToString("  ·  ")
 }
 
 // ==================== 工具卡 / 审批卡 ====================

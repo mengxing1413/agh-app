@@ -186,9 +186,27 @@ public class AcpClient {
     }
 
     public void newSession(String cwd) {
+        // 先查已注册 workspace，取有效 path 做 cwd（传 "." 会被 SEMANTIC_REJECTED）
+        request("_agnes/v1/workspace.list", new JSONObject(), new RespCb() {
+            public void onResult(JSONObject result) {
+                String path = null;
+                JSONArray items = result.optJSONArray("items");
+                if (items != null && items.length() > 0) {
+                    JSONObject first = items.optJSONObject(0);
+                    if (first != null) path = first.optString("path", null);
+                }
+                doNewSession(path != null ? path : (cwd == null ? "." : cwd));
+            }
+            public void onError(String msg) {
+                doNewSession(cwd == null ? "." : cwd);
+            }
+        });
+    }
+
+    private void doNewSession(String cwd) {
         try {
             JSONObject params = new JSONObject();
-            params.put("cwd", cwd == null ? "." : cwd);
+            params.put("cwd", cwd);
             params.put("mcpServers", new JSONArray());
             request("session/new", params, new RespCb() {
                 public void onResult(JSONObject result) {

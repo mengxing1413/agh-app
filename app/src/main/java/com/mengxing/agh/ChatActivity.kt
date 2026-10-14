@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.AddComment
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.History
@@ -104,6 +105,7 @@ fun ChatScreen(vm: ChatViewModel) {
         topBar = {
             YunoTopBar(
                 state = state,
+                onNewSession = { vm.newSession() },
                 onSessions = { vm.openSessions() },
                 onWorkbench = { context.startActivity(Intent(context, MainActivity::class.java)) },
                 onSettings = { context.startActivity(Intent(context, SettingsActivity::class.java)) }
@@ -135,6 +137,7 @@ fun ChatScreen(vm: ChatViewModel) {
         SessionSheet(
             state = state,
             onPick = { s -> vm.openSession(s.sessionId, s.cwd) },
+            onNewSession = { vm.newSession() },
             onDismiss = { vm.closeSessions() },
             onRetry = { vm.refreshSessions() }
         )
@@ -146,6 +149,7 @@ fun ChatScreen(vm: ChatViewModel) {
 @Composable
 private fun YunoTopBar(
     state: ChatUiState,
+    onNewSession: () -> Unit,
     onSessions: () -> Unit,
     onWorkbench: () -> Unit,
     onSettings: () -> Unit
@@ -192,6 +196,9 @@ private fun YunoTopBar(
                 }
             }
 
+            IconButton(onClick = onNewSession) {
+                Icon(Icons.Outlined.AddComment, "新会话", tint = cs.onBackground)
+            }
             IconButton(onClick = onSessions) {
                 Icon(Icons.Outlined.History, "历史会话", tint = cs.onBackground)
             }
@@ -336,7 +343,22 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
                 shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
                 border = BorderStroke(1.dp, cs.outlineVariant)
             ) {
-                MarkdownText(item.text, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+                if (item.text.isEmpty()) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            strokeWidth = 2.dp,
+                            color = cs.primary
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        Text("正在思考…", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                    }
+                } else {
+                    MarkdownText(item.text, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+                }
             }
             val meta = agentMeta(item)
             if (meta.isNotEmpty()) {
@@ -549,6 +571,7 @@ private fun InputBar(
 private fun SessionSheet(
     state: ChatUiState,
     onPick: (AcpClient.SessionInfo) -> Unit,
+    onNewSession: () -> Unit,
     onDismiss: () -> Unit,
     onRetry: () -> Unit
 ) {
@@ -568,6 +591,23 @@ private fun SessionSheet(
                 fontWeight = FontWeight.Bold,
                 color = cs.onSurface
             )
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                color = cs.primary,
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50))
+                    .clickable { onNewSession() }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(Icons.Outlined.AddComment, null, tint = cs.onPrimary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("新建会话", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimary)
+                }
+            }
             Spacer(Modifier.height(14.dp))
             when {
                 state.sessionsLoading -> Box(

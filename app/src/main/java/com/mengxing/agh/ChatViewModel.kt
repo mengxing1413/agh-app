@@ -105,6 +105,11 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         sendStartMs = System.currentTimeMillis()
         val key = "u" + ids.incrementAndGet()
         _state.update { it.copy(items = it.items + ChatItem.UserBubble(key, t, clock())) }
+        // 立即放一个"正在思考"占位气泡：AI 首字之前也有反馈，不再干等
+        val akey = "a" + ids.incrementAndGet()
+        streamingAgentKey = akey
+        lastAgentKey = akey
+        _state.update { it.copy(items = it.items + ChatItem.AgentBubble(akey, "", false, clock())) }
         acp.prompt(t)
     }
 
@@ -119,6 +124,21 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
                 sessionsOpen = false, statusText = "正在加载历史…")
         }
         acp.loadSession(sid, cwd)
+    }
+
+    /** 新建会话：清屏并让服务端开一个全新 session（对齐网页版的"新会话"）。 */
+    fun newSession() {
+        historyMode = false
+        userEchoKey = null
+        streamingAgentKey = null
+        lastAgentText = ""
+        lastAgentKey = null
+        sendStartMs = 0L
+        _state.update {
+            it.copy(items = emptyList(), historyLoaded = false,
+                sessionsOpen = false, statusText = "新会话", inputEnabled = true)
+        }
+        acp.newSession(".")
     }
 
     fun openSessions() {

@@ -7,7 +7,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -18,22 +20,43 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 
 /**
- * 原生 ACP（Agent Client Protocol）客户端：
- * 通过 WebSocket + JSON-RPC 直连 AGH，实现 initialize / session/new /
- * session/prompt / session/update（流式）/ session/request_permission。
- * 完全不依赖 WebView。
+ * 原生 ACP（Agent Client Protocol）客户端：WebSocket + JSON-RPC 直连 AGH。
+ *
+ * v0.0.8 变更：
+ * 1) 修正 session/request_permission 方向——它是 s2c request（服务端下发带 id 的请求），
+ *    客户端必须用【同一个 id】回 response，而不是再发一个新请求。
+ * 2) tool_call 全量字段（toolCallId/title/kind/status/rawInput/rawOutput）+ tool_call_update。
+ * 3) 断线指数退避自动重连（1s→2s→4s…封顶 30s）。
  */
 public class AcpClient {
 
+    /** 审批选项（PermissionOption）。 */
+    public static class PermOption {
+        public final String optionId, name, kind;
+        public PermOption(String optionId, String name, String kind) {
+            this.optionId = optionId;
+            this.name = name;
+            this.kind = kind;
+        }
+    }
+
     public interface Listener {
         void onConnected();
-        void onMessageChunk(String text);       // 流式片段
-        void onAgentMessage(String text);       // 完整消息
-        void onToolCall(String name, String args);
-        void onPermissionRequest(String reqId, String desc);
+        void onMessageChunk(String text);
+        void onAgentMessage(String text);
+        /** 新工具调用（tool_call）。 */
+        void onToolCall(String toolCallId, String title, String kind, String status,
+                        String rawInput, String rawOutput);
+        /** 工具调用状态/内容更新（tool_call_update）。 */
+        void onToolCallUpdate(String toolCallId, String title, String kind, String status,
+                              String rawInput, String rawOutput);
+        /** 权限请求：reqId 是服务端请求的 JSON-RPC id，回包必须原样带回。 */
+        void onPermissionRequest(Object reqId, String title, List<PermOption> options);
         void onPromptDone(String stopReason);
         void onError(String msg);
         void onClosed();
+        /** 断线，正在自动重连。 */
+        void onReconnecting(String msg);
     }
 
     private final OkHttpClient client;
@@ -43,6 +66,12 @@ public class AcpClient {
     private int nextId = 1;
     private final Map<Integer, RespCb> pending = new HashMap<>();
     private String sessionId;
+
+    // —— 重连状态 ——
+    private String url, user, pass;
+    private boolean manualClose = false;
+    private int retryCount = 0;
+    private Runnable reconnectTask;
 
     public interface RespCb { void onResult(JSONObject result); void onError(String msg); }
 
@@ -56,7 +85,17 @@ public class AcpClient {
     public void setListener(Listener l) { this.listener = l; }
     public String getSessionId() { return sessionId; }
 
+    // —— 连接 / 重连 ——
     public void connect(String url, String user, String pass) {
+        this.url = url;
+        this.user = user;
+        this.pass = pass;
+        this.manualClose = false;
+        this.retryCount = 0;
+        openSocket();
+    }
+
+    private void openSocket() {
         String cred = android.util.Base64.encodeToString(
             (user + ":" + pass).getBytes(), android.util.Base64.NO_WRAP);
         Request req = new Request.Builder()
@@ -68,6 +107,7 @@ public class AcpClient {
 
         ws = client.newWebSocket(req, new WebSocketListener() {
             @Override public void onOpen(WebSocket webSocket, Response response) {
+                retryCount = 0;
                 notifyConnected();
                 doInitialize();
             }
@@ -75,12 +115,22 @@ public class AcpClient {
                 handleMessage(text);
             }
             @Override public void onFailure(WebSocket webSocket, Throwable t, Response r) {
-                notifyError("连接失败：" + t.getMessage());
+                if (manualClose) notifyClosed(); else scheduleReconnect();
             }
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
-                notifyClosed();
+                if (manualClose) notifyClosed(); else scheduleReconnect();
             }
         });
+    }
+
+    private void scheduleReconnect() {
+        // 指数退避：1,2,4,8,16,30,30…（秒）
+        int delay = (int) Math.min(30, Math.pow(2, retryCount));
+        retryCount++;
+        notifyReconnecting("连接中断，第 " + retryCount + " 次重连（" + delay + "s 后）…");
+        if (reconnectTask != null) main.removeCallbacks(reconnectTask);
+        reconnectTask = () -> { if (!manualClose) openSocket(); };
+        main.postDelayed(reconnectTask, delay * 1000L);
     }
 
     // —— JSON-RPC ——
@@ -115,6 +165,7 @@ public class AcpClient {
         try {
             JSONObject m = new JSONObject(text);
             if (m.has("id") && (m.has("result") || m.has("error"))) {
+                // —— 服务端对本客户端请求的响应 ——
                 int id = m.getInt("id");
                 RespCb cb = pending.remove(id);
                 if (cb != null) {
@@ -128,39 +179,93 @@ public class AcpClient {
                     }
                 }
             } else if (m.has("method")) {
-                handleServerMessage(m.getString("method"), m.optJSONObject("params"));
+                // —— 服务端主动下发：notification（无 id）或 request（有 id）——
+                handleServerMessage(m.getString("method"), m.optJSONObject("params"), m.opt("id"));
             }
         } catch (JSONException e) { /* ignore non-json */ }
     }
 
-    private void handleServerMessage(String method, JSONObject p) {
+    private void handleServerMessage(String method, JSONObject p, Object rpcId) {
         if (p == null) p = new JSONObject();
         if ("session/update".equals(method)) {
-            JSONObject update = p.optJSONObject("update");
-            if (update == null) return;
-            String kind = update.optString("sessionUpdate", "");
+            JSONObject u = p.optJSONObject("update");
+            if (u == null) return;
+            String kind = u.optString("sessionUpdate", "");
             if ("agent_message_chunk".equals(kind)) {
-                String text = extractText(update);
+                String text = extractText(u);
                 if (!text.isEmpty()) notifyChunk(text);
             } else if ("agent_message".equals(kind)) {
-                String text = extractText(update);
+                String text = extractText(u);
                 if (!text.isEmpty()) notifyAgentMessage(text);
             } else if ("tool_call".equals(kind)) {
-                String name = update.optString("toolCallId", update.optString("title", "tool"));
-                String args = update.optString("args", "");
-                notifyToolCall(name, args);
+                notifyToolCall(
+                    u.optString("toolCallId", ""),
+                    u.optString("title", ""),
+                    u.optString("kind", ""),
+                    u.optString("status", ""),
+                    toStr(u.opt("rawInput")),
+                    toStr(u.opt("rawOutput")));
+            } else if ("tool_call_update".equals(kind)) {
+                notifyToolCallUpdate(
+                    u.optString("toolCallId", ""),
+                    u.optString("title", ""),
+                    u.optString("kind", ""),
+                    u.optString("status", ""),
+                    toStr(u.opt("rawInput")),
+                    toStr(u.opt("rawOutput")));
             }
+            // 其余：agent_thought_chunk / plan / available_commands_update / current_mode_update 暂不展示
         } else if ("session/request_permission".equals(method)) {
-            String reqId = p.optString("requestId", String.valueOf(System.currentTimeMillis()));
-            String desc = p.optString("description", "Agent 请求权限");
-            notifyPermission(reqId, desc);
-            // 默认允许继续
-            try {
-                JSONObject resp = new JSONObject();
-                resp.put("outcome", new JSONObject().put("outcome", "selected").put("optionId", "allow"));
-                request("session/request_permission", resp, null);
-            } catch (Exception ignored) {}
+            JSONObject toolCall = p.optJSONObject("toolCall");
+            String title = (toolCall != null) ? toolCall.optString("title", "工具操作") : "工具操作";
+            List<PermOption> opts = new ArrayList<>();
+            JSONArray arr = p.optJSONArray("options");
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.optJSONObject(i);
+                    if (o == null) continue;
+                    opts.add(new PermOption(
+                        o.optString("optionId", ""),
+                        o.optString("name", ""),
+                        o.optString("kind", "")));
+                }
+            }
+            notifyPermission(rpcId, title, opts);
         }
+    }
+
+    /**
+     * 回应权限请求（关键修正）：用服务端请求的【同一个 id】回 response。
+     * 报文：{"jsonrpc":"2.0","id":<reqId>,"result":{"outcome":{"outcome":"selected","optionId":"..."}}}
+     */
+    public void respondPermission(Object reqId, String optionId) {
+        try {
+            JSONObject outcome = new JSONObject();
+            outcome.put("outcome", "selected");
+            outcome.put("optionId", optionId);
+            sendPermissionResult(reqId, outcome);
+        } catch (JSONException e) { notifyError(e.getMessage()); }
+    }
+
+    /** 取消权限请求：outcome = cancelled。 */
+    public void cancelPermission(Object reqId) {
+        try {
+            JSONObject outcome = new JSONObject();
+            outcome.put("outcome", "cancelled");
+            sendPermissionResult(reqId, outcome);
+        } catch (JSONException e) { notifyError(e.getMessage()); }
+    }
+
+    private void sendPermissionResult(Object reqId, JSONObject outcome) {
+        try {
+            JSONObject result = new JSONObject();
+            result.put("outcome", outcome);
+            JSONObject m = new JSONObject();
+            m.put("jsonrpc", "2.0");
+            m.put("id", reqId == null ? 0 : reqId);
+            m.put("result", result);
+            send(m);
+        } catch (JSONException e) { notifyError(e.getMessage()); }
     }
 
     private String extractText(JSONObject update) {
@@ -170,6 +275,16 @@ public class AcpClient {
             if (!t.isEmpty()) return t;
         }
         return update.optString("text", "");
+    }
+
+    private String toStr(Object o) {
+        if (o == null || o == JSONObject.NULL) return "";
+        if (o instanceof String) return (String) o;
+        try {
+            if (o instanceof JSONObject) return ((JSONObject) o).toString(2);
+            if (o instanceof JSONArray) return ((JSONArray) o).toString(2);
+        } catch (Exception ignored) {}
+        return o.toString();
     }
 
     // —— ACP 协议方法 ——
@@ -247,6 +362,8 @@ public class AcpClient {
     }
 
     public void close() {
+        manualClose = true;
+        if (reconnectTask != null) main.removeCallbacks(reconnectTask);
         if (ws != null) { try { ws.close(1000, "bye"); } catch (Exception ignored) {} }
     }
 
@@ -254,9 +371,17 @@ public class AcpClient {
     private void notifyConnected() { main.post(() -> { if (listener != null) listener.onConnected(); }); }
     private void notifyChunk(String t) { main.post(() -> { if (listener != null) listener.onMessageChunk(t); }); }
     private void notifyAgentMessage(String t) { main.post(() -> { if (listener != null) listener.onAgentMessage(t); }); }
-    private void notifyToolCall(String n, String a) { main.post(() -> { if (listener != null) listener.onToolCall(n, a); }); }
-    private void notifyPermission(String id, String d) { main.post(() -> { if (listener != null) listener.onPermissionRequest(id, d); }); }
+    private void notifyToolCall(String id, String ti, String k, String s, String in, String out) {
+        main.post(() -> { if (listener != null) listener.onToolCall(id, ti, k, s, in, out); });
+    }
+    private void notifyToolCallUpdate(String id, String ti, String k, String s, String in, String out) {
+        main.post(() -> { if (listener != null) listener.onToolCallUpdate(id, ti, k, s, in, out); });
+    }
+    private void notifyPermission(Object id, String ti, List<PermOption> opts) {
+        main.post(() -> { if (listener != null) listener.onPermissionRequest(id, ti, opts); });
+    }
     private void notifyPromptDone(String s) { main.post(() -> { if (listener != null) listener.onPromptDone(s); }); }
     private void notifyError(String m) { main.post(() -> { if (listener != null) listener.onError(m); }); }
     private void notifyClosed() { main.post(() -> { if (listener != null) listener.onClosed(); }); }
+    private void notifyReconnecting(String m) { main.post(() -> { if (listener != null) listener.onReconnecting(m); }); }
 }

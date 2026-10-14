@@ -1,10 +1,17 @@
 package com.mengxing.agh;
 
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.TypedValue;
@@ -17,9 +24,18 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * 原生对话页：完全原生 UI，通过 AcpClient 直连 AGH（WebSocket），
- * 消息气泡 + 输入框 + 流式输出。不依赖 WebView。
+ * 原生对话页：完全原生 UI，通过 AcpClient 直连 AGH（WebSocket）。
+ *
+ * v0.0.8 新增：
+ * - 工具轨迹卡片（tool_call / tool_call_update，状态角标 + 可展开原始输入输出）
+ * - 审批交互卡片（session/request_permission，协议方向已修正）
+ * - 断线自动重连提示
+ * - 退到后台时 Agent 回复完发系统通知
  */
 public class ChatActivity extends Activity implements AcpClient.Listener {
 
@@ -27,6 +43,10 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         "wss://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/__agh_ws";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
+
+    private static final String CHANNEL_ID = "yuno_reply";
+    private static final int NOTIF_ID = 1;
+    private static final int REQ_NOTIF_PERM = 1001;
 
     private AcpClient acp;
     private LinearLayout messages;
@@ -37,6 +57,13 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
     private StringBuilder streamBuf = new StringBuilder();
     private TextView statusView;
 
+    // 工具卡片索引（toolCallId → 卡片）
+    private final Map<String, ToolCard> toolCards = new HashMap<>();
+
+    // 通知 / 前后台
+    private boolean foreground = true;
+    private String lastAgentText = "";
+
     // —— 跟随系统的配色 ——
     private boolean isNight() {
         int m = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
@@ -46,6 +73,8 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
     private int cText()   { return isNight() ? 0xFFF2F7F4 : 0xFF111827; }
     private int cSub()    { return isNight() ? 0xFF9FB3A8 : 0xFF6B7280; }
     private int cAccent() { return isNight() ? 0xFF7C9F69 : 0xFF2F7D5B; }
+    private int cWarn()   { return isNight() ? 0xFFE0A030 : 0xFFB7791F; }
+    private int cCard()   { return isNight() ? 0xFF16241D : 0xFFFFFFFF; }
     private int cUserBubble()  { return isNight() ? 0xFF2F7D5B : 0xFF2F7D5B; }
     private int cAgentBubble() { return isNight() ? 0xFF14231C : 0xFFFFFFFF; }
 
@@ -63,6 +92,13 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         return t;
     }
 
+    private GradientDrawable rounded(int color, int radiusDp) {
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(radiusDp));
+        g.setColor(color);
+        return g;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -77,9 +113,8 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setPadding(dp(16), dp(14), dp(16), dp(14));
         top.setBackgroundColor(cBg());
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        top.setLayoutParams(tlp);
+        top.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView back = tv("‹", 28, cText(), false);
         back.setOnClickListener(v -> finish());
@@ -101,7 +136,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         workbenchBtn.setTextColor(cText());
         workbenchBtn.setBackgroundColor(Color.TRANSPARENT);
         workbenchBtn.setOnClickListener(v ->
-            startActivity(new android.content.Intent(this, MainActivity.class)));
+            startActivity(new Intent(this, MainActivity.class)));
         top.addView(workbenchBtn);
 
         Button settingsBtn = new Button(this);
@@ -109,15 +144,14 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         settingsBtn.setTextColor(cText());
         settingsBtn.setBackgroundColor(Color.TRANSPARENT);
         settingsBtn.setOnClickListener(v ->
-            startActivity(new android.content.Intent(this, SettingsActivity.class)));
+            startActivity(new Intent(this, SettingsActivity.class)));
         top.addView(settingsBtn);
 
         // —— 消息列表 ——
         scroll = new ScrollView(this);
         scroll.setBackgroundColor(cBg());
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1);
-        scroll.setLayoutParams(slp);
+        scroll.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         messages = new LinearLayout(this);
         messages.setOrientation(LinearLayout.VERTICAL);
         messages.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -143,9 +177,8 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         ib.setColor(cAgentBubble());
         ib.setStroke(dp(1), cSub());
         input.setBackground(ib);
-        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(0,
-            ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        input.setLayoutParams(ilp);
+        input.setLayoutParams(new LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         sendBtn = new Button(this);
         sendBtn.setText("发送");
@@ -155,8 +188,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         sb.setCornerRadius(dp(18));
         sb.setColor(cAccent());
         sendBtn.setBackground(sb);
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-            dp(64), dp(40));
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(64), dp(40));
         blp.leftMargin = dp(8);
         sendBtn.setLayoutParams(blp);
         sendBtn.setOnClickListener(v -> doSend());
@@ -172,6 +204,10 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         // 欢迎气泡
         addAgentBubble("你好，我是 YunoAgent 🐹\n你的随身 AGH，有什么想聊的？");
 
+        // 通知渠道 + 权限
+        ensureChannel();
+        requestNotifPerm();
+
         // 连接 AGH
         acp = new AcpClient();
         acp.setListener(this);
@@ -184,22 +220,21 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         addUserBubble(text);
         input.setText("");
         streamBuf.setLength(0);
+        lastAgentText = "";
         acp.prompt(text);
     }
 
     // —— 气泡 ——
     private void addUserBubble(String text) {
         LinearLayout wrap = bubbleWrap(Gravity.END);
-        TextView bubble = makeBubble(text, cUserBubble(), Color.WHITE);
-        wrap.addView(bubble);
+        wrap.addView(makeBubble(text, cUserBubble(), Color.WHITE));
         messages.addView(wrap);
         scrollToBottom();
     }
 
     private void addAgentBubble(String text) {
         LinearLayout wrap = bubbleWrap(Gravity.START);
-        TextView bubble = makeBubble(text, cAgentBubble(), cText());
-        wrap.addView(bubble);
+        wrap.addView(makeBubble(text, cAgentBubble(), cText()));
         messages.addView(wrap);
         scrollToBottom();
     }
@@ -222,10 +257,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         bubble.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         bubble.setLineSpacing(dp(3), 1);
         bubble.setPadding(dp(14), dp(10), dp(14), dp(10));
-        GradientDrawable g = new GradientDrawable();
-        g.setCornerRadius(dp(16));
-        g.setColor(bg);
-        bubble.setBackground(g);
+        bubble.setBackground(rounded(bg, 16));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.leftMargin = dp(8); lp.rightMargin = dp(8);
@@ -237,10 +269,291 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
     }
 
-    // —— AcpClient.Listener（流式）——
+    // ===================== 工具轨迹卡片 =====================
+
+    private static class ToolCard {
+        LinearLayout card;
+        TextView header;
+        TextView body;
+        boolean expanded = false;
+        String title = "", kind = "", status = "", rawInput = "", rawOutput = "";
+    }
+
+    private static String statusIcon(String status) {
+        if (status == null) return "•";
+        switch (status) {
+            case "completed": return "✓";
+            case "failed":    return "✗";
+            case "in_progress": return "⏳";
+            case "pending":   return "⏳";
+            default:          return "•";
+        }
+    }
+
+    private int statusColor(String status) {
+        if (status == null) return cSub();
+        switch (status) {
+            case "completed": return cAccent();
+            case "failed":    return isNight() ? 0xFFE06A6A : 0xFFC0392B;
+            case "in_progress": return cWarn();
+            case "pending":   return cWarn();
+            default:          return cSub();
+        }
+    }
+
+    private String toolKindIcon(String kind) {
+        if (kind == null) return "🔧";
+        switch (kind) {
+            case "read":    return "📖";
+            case "edit":    return "✏️";
+            case "delete":  return "🗑";
+            case "move":    return "📦";
+            case "search":  return "🔍";
+            case "execute": return "▶️";
+            case "think":   return "💭";
+            case "fetch":   return "🌐";
+            default:        return "🔧";
+        }
+    }
+
+    private void onToolEvent(String toolCallId, String title, String kind, String status,
+                             String rawInput, String rawOutput, boolean isUpdate) {
+        String key = TextUtils.isEmpty(toolCallId) ? ("t:" + title) : toolCallId;
+        ToolCard card = toolCards.get(key);
+        if (card == null) {
+            card = buildToolCard();
+            toolCards.put(key, card);
+            LinearLayout wrap = bubbleWrap(Gravity.START);
+            wrap.addView(card.card);
+            messages.addView(wrap);
+        }
+        // 合并更新：仅在字段非空时覆盖（tool_call_update 是增量）
+        if (!TextUtils.isEmpty(title)) card.title = title;
+        if (!TextUtils.isEmpty(kind)) card.kind = kind;
+        if (!TextUtils.isEmpty(status)) card.status = status;
+        if (!TextUtils.isEmpty(rawInput)) card.rawInput = rawInput;
+        if (!TextUtils.isEmpty(rawOutput)) card.rawOutput = rawOutput;
+        refreshToolCard(card);
+        scrollToBottom();
+    }
+
+    private ToolCard buildToolCard() {
+        ToolCard c = new ToolCard();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable g = rounded(cCard(), 12);
+        g.setStroke(dp(1), isNight() ? 0xFF24352B : 0xFFE2E6EA);
+        card.setBackground(g);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.leftMargin = dp(8); clp.rightMargin = dp(8);
+        card.setLayoutParams(clp);
+
+        c.header = tv("", 13, cText(), true);
+        card.addView(c.header);
+
+        c.body = tv("", 12, cSub(), false);
+        c.body.setPadding(0, dp(6), 0, 0);
+        c.body.setVisibility(View.GONE);
+        card.addView(c.body);
+
+        card.setOnClickListener(v -> {
+            c.expanded = !c.expanded;
+            c.body.setVisibility(c.expanded ? View.VISIBLE : View.GONE);
+            scrollToBottom();
+        });
+        c.card = card;
+        return c;
+    }
+
+    private void refreshToolCard(ToolCard c) {
+        String title = TextUtils.isEmpty(c.title) ? "工具调用" : c.title;
+        c.header.setText(toolKindIcon(c.kind) + " " + statusIcon(c.status) + "  " + title);
+        c.header.setTextColor(statusColor(c.status));
+
+        StringBuilder b = new StringBuilder();
+        b.append("状态：").append(TextUtils.isEmpty(c.status) ? "—" : c.status);
+        if (!TextUtils.isEmpty(c.kind)) b.append("　·　类型：").append(c.kind);
+        if (!TextUtils.isEmpty(c.rawInput)) b.append("\n\n参数：\n").append(c.rawInput);
+        if (!TextUtils.isEmpty(c.rawOutput)) b.append("\n\n结果：\n").append(c.rawOutput);
+        c.body.setText(b.toString());
+
+        boolean hasDetail = !TextUtils.isEmpty(c.rawInput) || !TextUtils.isEmpty(c.rawOutput);
+        c.header.setText(c.header.getText() + (hasDetail ? (c.expanded ? "  ▾" : "  ▸") : ""));
+    }
+
+    // ===================== 审批卡片 =====================
+
+    private static String optionLabel(AcpClient.PermOption o) {
+        if (!TextUtils.isEmpty(o.name)) return o.name;
+        switch (o.kind) {
+            case "allow_once":    return "本次允许";
+            case "allow_always":  return "总是允许";
+            case "reject_once":   return "拒绝";
+            case "reject_always": return "总是拒绝";
+            default:              return TextUtils.isEmpty(o.optionId) ? "选择" : o.optionId;
+        }
+    }
+
+    private boolean isAllow(AcpClient.PermOption o) {
+        return o.kind != null && o.kind.startsWith("allow");
+    }
+
+    private void makePermissionCard(Object reqId, String title, List<AcpClient.PermOption> options) {
+        LinearLayout wrap = bubbleWrap(Gravity.START);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable g = rounded(cCard(), 14);
+        g.setStroke(dp(2), cWarn());
+        card.setBackground(g);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.leftMargin = dp(8); clp.rightMargin = dp(8);
+        card.setLayoutParams(clp);
+
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.bottomMargin = dp(10);
+        TextView t = tv("⚠️ 需要授权：" + title, 14, cText(), true);
+        t.setLayoutParams(tlp);
+        card.addView(t);
+
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        if (options == null || options.isEmpty()) {
+            // 协议兜底：无选项时给一个取消
+            Button b = new Button(this);
+            b.setText("取消");
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            b.setTextColor(Color.WHITE);
+            b.setBackground(rounded(isNight() ? 0xFF3A3A3A : 0xFF6B7280, 16));
+            b.setOnClickListener(v -> {
+                acp.cancelPermission(reqId);
+                lockPermissionRow(btnRow, "已取消");
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
+            lp.rightMargin = dp(8);
+            b.setLayoutParams(lp);
+            btnRow.addView(b);
+        } else {
+            for (AcpClient.PermOption o : options) {
+                Button b = new Button(this);
+                b.setText(optionLabel(o));
+                b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                b.setTextColor(Color.WHITE);
+                b.setBackground(rounded(isAllow(o) ? cAccent()
+                    : (isNight() ? 0xFF3A3A3A : 0xFF6B7280), 16));
+                b.setAllCaps(false);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
+                lp.rightMargin = dp(8);
+                b.setLayoutParams(lp);
+                final AcpClient.PermOption opt = o;
+                b.setOnClickListener(v -> {
+                    acp.respondPermission(reqId, opt.optionId);
+                    lockPermissionRow(btnRow, "已选择：" + optionLabel(opt));
+                });
+                btnRow.addView(b);
+            }
+        }
+        card.addView(btnRow);
+        wrap.addView(card);
+        messages.addView(wrap);
+        scrollToBottom();
+    }
+
+    private void lockPermissionRow(LinearLayout row, String note) {
+        for (int i = 0; i < row.getChildCount(); i++) {
+            row.getChildAt(i).setEnabled(false);
+            row.getChildAt(i).setAlpha(0.5f);
+        }
+        TextView done = tv("✓ " + note, 12, cSub(), false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = dp(6);
+        done.setLayoutParams(lp);
+        row.addView(done);
+    }
+
+    // ===================== 通知 =====================
+
+    private void ensureChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel ch = new NotificationChannel(
+                    CHANNEL_ID, "Agent 回复", NotificationManager.IMPORTANCE_DEFAULT);
+                ch.setDescription("YunoAgent 在后台时收到新回复");
+                nm.createNotificationChannel(ch);
+            }
+        }
+    }
+
+    private void requestNotifPerm() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIF_PERM);
+            }
+        }
+    }
+
+    private void notifyReply(String text) {
+        if (foreground) return;
+        if (TextUtils.isEmpty(text)) text = "Agent 已回复";
+        String brief = text.length() > 120 ? text.substring(0, 120) + "…" : text;
+        try {
+            Intent i = new Intent(this, ChatActivity.class);
+            i.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pi = PendingIntent.getActivity(this, 0, i, flags);
+
+            Notification.Builder nb = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+            Notification n = nb
+                .setSmallIcon(android.R.drawable.stat_notify_chat)
+                .setContentTitle("YunoAgent")
+                .setContentText(brief)
+                .setStyle(new Notification.BigTextStyle().bigText(brief))
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.notify(NOTIF_ID, n);
+        } catch (Exception ignored) {}
+    }
+
+    private void clearNotification() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(NOTIF_ID);
+        } catch (Exception ignored) {}
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        foreground = true;
+        clearNotification();
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        foreground = false;
+    }
+
+    // ===================== AcpClient.Listener =====================
+
     @Override public void onConnected() {
         statusView.setText("已连接");
         statusView.setTextColor(cAccent());
+        toolCards.clear(); // 重连后是新会话，重置工具卡片索引
         acp.newSession(".");
     }
 
@@ -252,6 +565,7 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
             messages.addView(wrap);
         }
         streamBuf.append(text);
+        lastAgentText += text;
         streamBubble.setText(streamBuf.toString());
         scrollToBottom();
     }
@@ -264,20 +578,28 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
         } else {
             addAgentBubble(text);
         }
+        if (TextUtils.isEmpty(lastAgentText)) lastAgentText = text;
         scrollToBottom();
     }
 
-    @Override public void onToolCall(String name, String args) {
-        addAgentBubble("🔧 调用工具：" + name);
+    @Override public void onToolCall(String toolCallId, String title, String kind, String status,
+                                     String rawInput, String rawOutput) {
+        onToolEvent(toolCallId, title, kind, status, rawInput, rawOutput, false);
     }
 
-    @Override public void onPermissionRequest(String reqId, String desc) {
-        addAgentBubble("⚠️ 权限请求：" + desc + "（已自动允许）");
+    @Override public void onToolCallUpdate(String toolCallId, String title, String kind, String status,
+                                           String rawInput, String rawOutput) {
+        onToolEvent(toolCallId, title, kind, status, rawInput, rawOutput, true);
+    }
+
+    @Override public void onPermissionRequest(Object reqId, String title, List<AcpClient.PermOption> options) {
+        makePermissionCard(reqId, title, options);
     }
 
     @Override public void onPromptDone(String stopReason) {
         streamBubble = null;
         streamBuf.setLength(0);
+        notifyReply(lastAgentText);
     }
 
     @Override public void onError(String msg) {
@@ -285,7 +607,14 @@ public class ChatActivity extends Activity implements AcpClient.Listener {
     }
 
     @Override public void onClosed() {
+        statusView.setText("已断开");
+        statusView.setTextColor(cSub());
         addAgentBubble("🔌 连接已断开");
+    }
+
+    @Override public void onReconnecting(String msg) {
+        statusView.setText(msg);
+        statusView.setTextColor(cWarn());
     }
 
     @Override

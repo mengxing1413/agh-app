@@ -26,5 +26,11 @@
             android:exported="false"
             android:label="设置"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode" />
+
+        <activity
+            android:name=".ChatActivity"
+            android:exported="false"
+            android:label="对话"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

@@ -267,6 +267,26 @@ public class MainActivity extends Activity {
         startActivity(new Intent(this, SettingsActivity.class));
     }
 
+    /** 左上角悬浮"原生对话"入口 */
+    private View buildChatFab() {
+        TextView fab = new TextView(this);
+        fab.setText("💬");
+        fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        fab.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(0x6614231C);
+        fab.setBackground(g);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(36), dp(36));
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.topMargin = dp(14);
+        lp.leftMargin = dp(14);
+        fab.setLayoutParams(lp);
+        fab.setOnClickListener(v ->
+            startActivity(new Intent(this, ChatActivity.class)));
+        return fab;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -378,6 +398,7 @@ public class MainActivity extends Activity {
         root.addView(splash, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(settingsFab);
+        root.addView(buildChatFab());
         root.addView(progress, pl);
         setContentView(root);
 

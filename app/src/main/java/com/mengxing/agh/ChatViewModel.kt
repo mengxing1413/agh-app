@@ -17,7 +17,9 @@ sealed interface ChatItem {
     data class UserBubble(
         override val key: String,
         val text: String,
-        val time: String = ""
+        val time: String = "",
+        val attLabels: List<String> = emptyList(),   // E 组：附件标签（文件名等）
+        val attImages: List<String> = emptyList()    // E 组：图片 base64（渲染缩略图）
     ) : ChatItem
 
     data class AgentBubble(
@@ -151,9 +153,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
 
     // ==================== 对外操作 ====================
 
-    fun send(text: String) {
+    fun send(
+        text: String,
+        attLabels: List<String> = emptyList(),
+        attImages: List<String> = emptyList(),
+        attachments: List<org.json.JSONObject>? = null
+    ) {
         val t = text.trim()
-        if (t.isEmpty()) return
+        if (t.isEmpty() && attachments.isNullOrEmpty()) return
         // 收尾上一轮还没完成的"正在思考"占位（连发两条场景），避免它永远转圈
         streamingAgentKey?.let { k ->
             _state.update { s ->
@@ -171,14 +178,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         lastAgentKey = null
         sendStartMs = System.currentTimeMillis()
         val key = "u" + ids.incrementAndGet()
-        _state.update { it.copy(items = it.items + ChatItem.UserBubble(key, t, clock())) }
+        _state.update { it.copy(items = it.items + ChatItem.UserBubble(key, t, clock(), attLabels, attImages)) }
         // 立即放一个"正在思考"占位气泡：AI 首字之前也有反馈，不再干等
         val akey = "a" + ids.incrementAndGet()
         streamingAgentKey = akey
         lastAgentKey = akey
         _state.update { it.copy(items = it.items + ChatItem.AgentBubble(akey, "", false, clock())) }
         bumpSessionStat(acp.getSessionId())   // E 组：记一笔最后活跃时间 + 真实消息数
-        acp.prompt(t)
+        acp.prompt(t, attachments)
     }
 
     fun openSession(sid: String, cwd: String) {
@@ -297,6 +304,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     }
 
     fun closeWorkspaces() { _state.update { it.copy(workspacesOpen = false) } }
+
+    /** D16：添加工作区（workspace.add，向 AGH 注册新目录）。 */
+    fun addWorkspace(path: String) {
+        acp.addWorkspace(path, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update { it.copy(workspaceNotice = "已添加工作区 ✓") }
+                refreshWorkspaces()
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(workspaceNotice = "添加失败：" + (msg ?: "")) }
+            }
+        })
+    }
 
     fun refreshWorkspaces() {
         acp.listWorkspaces(object : AcpClient.WorkspacesCb {

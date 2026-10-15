@@ -16,17 +16,25 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,10 +81,13 @@ fun WorkspaceSheet(
     state: ChatUiState,
     onPick: (AcpClient.Workspace) -> Unit,
     onRetry: () -> Unit,
+    onAddWorkspace: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var adding by remember { mutableStateOf(false) }
+    var newPath by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surface) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text("选择工作区", style = MaterialTheme.typography.titleLarge,
@@ -85,6 +96,32 @@ fun WorkspaceSheet(
             Text("新会话将在所选目录下工作", style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
+
+            // D16：添加工作区（向 AGH 注册新目录，App 不再只能用第一个）
+            if (adding) {
+                OutlinedTextField(
+                    value = newPath, onValueChange = { newPath = it },
+                    label = { Text("目录绝对路径（如 /opt/agh/repo）") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = {
+                        if (newPath.isNotBlank()) {
+                            onAddWorkspace(newPath.trim()); newPath = ""; adding = false
+                        }
+                    }) { Text("添加") }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { adding = false; newPath = "" }) { Text("取消") }
+                }
+                Spacer(Modifier.height(8.dp))
+            } else {
+                TextButton(onClick = { adding = true }) {
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加工作区")
+                }
+            }
 
             if (state.workspaces.isEmpty()) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 16.dp),

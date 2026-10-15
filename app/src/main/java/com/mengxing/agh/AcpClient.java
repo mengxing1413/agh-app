@@ -528,6 +528,40 @@ public class AcpClient {
         request("_agnes/v1/config.test", input, cb);
     }
 
+    // ==================== 工作区与皮肤（D 组）====================
+
+    /** 添加工作区（_agnes/v1/workspace.add，params {path}）。 */
+    public void addWorkspace(String path, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("path", path);
+            request("_agnes/v1/workspace.add", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /**
+     * 皮肤列表（_agnes/v1/skins.list → {revision, skins:[{id,name,packageName,cssUrl,...}]}）。
+     * AGH 的皮肤由"包"贡献（SkinContribution：id/name/css/tokens），
+     * tokens 是 {key:{light,dark}} 的设计令牌，可映射成原生主题色。
+     * 未安装任何皮肤包时返回空列表，此时 App 用内置皮肤兜底。
+     */
+    public void skinsList(RespCb cb) {
+        request("_agnes/v1/skins.list", new JSONObject(), cb);
+    }
+
+    /** 读单个皮肤（_agnes/v1/skins.read）。 */
+    public void skinsRead(String id, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            request("_agnes/v1/skins.read", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
     /** AGH 工作区条目（_agnes/v1/workspace.list 的 items）。 */
     public static class Workspace {
         public final String path, name;
@@ -807,13 +841,28 @@ public class AcpClient {
         }
     }
 
-    public void prompt(String text) {
+    public void prompt(String text) { prompt(text, null); }
+
+    /**
+     * 发送消息，可带附件（E 组）。
+     * attachments 为额外的 ContentBlock，支持：
+     *   {"type":"image","data":"<base64>","mimeType":"image/jpeg"}
+     *   {"type":"file","data":"<base64>","mimeType":"application/pdf","name":"报告.pdf"}
+     */
+    public void prompt(String text, List<JSONObject> attachments) {
         if (sessionId == null) { notifyError("会话未就绪"); return; }
         try {
-            JSONObject textBlock = new JSONObject();
-            textBlock.put("type", "text");
-            textBlock.put("text", text);
-            JSONArray prompt = new JSONArray().put(textBlock);
+            JSONArray prompt = new JSONArray();
+            if (text != null && !text.isEmpty()) {
+                JSONObject textBlock = new JSONObject();
+                textBlock.put("type", "text");
+                textBlock.put("text", text);
+                prompt.put(textBlock);
+            }
+            if (attachments != null) {
+                for (JSONObject b : attachments) prompt.put(b);
+            }
+            if (prompt.length() == 0) { notifyError("内容为空"); return; }
             JSONObject params = new JSONObject();
             params.put("sessionId", sessionId);
             params.put("prompt", prompt);

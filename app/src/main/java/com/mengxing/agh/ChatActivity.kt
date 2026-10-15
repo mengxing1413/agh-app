@@ -78,6 +78,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mengxing.agh.ui.MarkdownText
 import com.mengxing.agh.ui.theme.YunoAppTheme
@@ -106,6 +112,14 @@ fun ChatScreen(vm: ChatViewModel) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     var usageOpen by remember { mutableStateOf(false) }
+    // E 组：待发附件（选好先显示在输入框上方，可移除）
+    var pendingAtt by remember { mutableStateOf<List<PendingAtt>>(emptyList()) }
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) pendingAtt = pendingAtt + loadAtt(context, uri, true)
+    }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) pendingAtt = pendingAtt + loadAtt(context, uri, false)
+    }
 
     LaunchedEffect(state.items) {
         if (state.items.isNotEmpty()) {
@@ -166,7 +180,18 @@ fun ChatScreen(vm: ChatViewModel) {
                     value = input,
                     onValueChange = { input = it },
                     enabled = state.inputEnabled,
-                    onSend = { vm.send(input); input = "" }
+                    pendingAtt = pendingAtt,
+                    onAttachImage = { pickImage.launch("image/*") },
+                    onAttachFile = { pickFile.launch("*/*") },
+                    onRemoveAtt = { i -> pendingAtt = pendingAtt.filterIndexed { idx, _ -> idx != i } },
+                    onSend = {
+                        val blocks = pendingAtt.map { it.toBlock() }
+                        val labels = pendingAtt.filter { !it.isImage }.map { it.label }
+                        val images = pendingAtt.filter { it.isImage }.map { it.base64 }
+                        vm.send(input, labels, images, blocks)
+                        input = ""
+                        pendingAtt = emptyList()
+                    }
                 )
             }
         }
@@ -215,6 +240,7 @@ fun ChatScreen(vm: ChatViewModel) {
             state = state,
             onPick = { w -> vm.selectWorkspace(w) },
             onRetry = { vm.refreshWorkspaces() },
+            onAddWorkspace = { p -> vm.addWorkspace(p) },
             onDismiss = { vm.closeWorkspaces() }
         )
     }
@@ -378,12 +404,41 @@ private fun UserBubbleRow(item: ChatItem.UserBubble) {
             shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp),
             modifier = Modifier.widthIn(max = 300.dp)
         ) {
-            Text(
-                item.text,
-                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                color = cs.onPrimary,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                // E 组：附件（图片缩略图 + 文件名）
+                if (item.attImages.isNotEmpty() || item.attLabels.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        item.attImages.forEach { b64 ->
+                            val bmp = remember(b64) { decodeB64Image(b64) }
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "图片",
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                )
+                            }
+                        }
+                        item.attLabels.forEach { label ->
+                            Text(
+                                "📎 $label",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (item.text.isNotEmpty()) Spacer(Modifier.height(6.dp))
+                }
+                if (item.text.isNotEmpty()) {
+                    Text(
+                        item.text,
+                        color = cs.onPrimary,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
         }
         if (item.time.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
@@ -585,60 +640,119 @@ private fun InputBar(
     value: String,
     onValueChange: (String) -> Unit,
     enabled: Boolean,
+    pendingAtt: List<PendingAtt> = emptyList(),
+    onAttachImage: () -> Unit = {},
+    onAttachFile: () -> Unit = {},
+    onRemoveAtt: (Int) -> Unit = {},
     onSend: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
-    val canSend = enabled && value.isNotBlank()
+    val canSend = enabled && (value.isNotBlank() || pendingAtt.isNotEmpty())
+    var attachMenu by remember { mutableStateOf(false) }
+
     Surface(color = cs.background) {
-        Row(
-            Modifier.fillMaxWidth().imePadding()
-                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = cs.surface,
-                border = BorderStroke(1.dp, cs.outline),
-                modifier = Modifier.weight(1f)
+        Column(Modifier.fillMaxWidth().imePadding()) {
+            // 待发附件预览条（点一下可移除）
+            if (pendingAtt.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    pendingAtt.forEachIndexed { i, att -> AttachmentChip(att) { onRemoveAtt(i) } }
+                }
+            }
+
+            Row(
+                Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.Bottom
             ) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    enabled = enabled,
-                    textStyle = TextStyle(color = cs.onSurface, fontSize = 15.sp),
-                    cursorBrush = SolidColor(cs.primary),
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 11.dp),
-                    decorationBox = { inner ->
-                        Box {
-                            if (value.isEmpty()) {
-                                Text(
-                                    "给 YunoAgent 发消息…",
-                                    color = cs.onSurfaceVariant,
-                                    fontSize = 15.sp
-                                )
-                            }
-                            inner()
-                        }
+                // 附件按钮：发图片 / 发文件
+                Box {
+                    IconButton(onClick = { attachMenu = true }, enabled = enabled) {
+                        Icon(Icons.Outlined.AttachFile, "添加附件", tint = cs.onSurfaceVariant)
                     }
-                )
-            }
+                    DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                        DropdownMenuItem(text = { Text("📷 发图片") },
+                            onClick = { attachMenu = false; onAttachImage() })
+                        DropdownMenuItem(text = { Text("📎 发文件") },
+                            onClick = { attachMenu = false; onAttachFile() })
+                    }
+                }
 
-            Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = cs.surface,
+                    border = BorderStroke(1.dp, cs.outline),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        enabled = enabled,
+                        textStyle = TextStyle(color = cs.onSurface, fontSize = 15.sp),
+                        cursorBrush = SolidColor(cs.primary),
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 11.dp),
+                        decorationBox = { inner ->
+                            Box {
+                                if (value.isEmpty()) {
+                                    Text(
+                                        "给 YunoAgent 发消息…",
+                                        color = cs.onSurfaceVariant,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                                inner()
+                            }
+                        }
+                    )
+                }
 
-            Box(
-                Modifier.size(44.dp).clip(CircleShape)
-                    .background(if (canSend) cs.primary else cs.surfaceVariant)
-                    .clickable(enabled = canSend) { onSend() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    "发送",
-                    tint = if (canSend) cs.onPrimary else cs.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
-                )
+                Spacer(Modifier.width(8.dp))
+
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape)
+                        .background(if (canSend) cs.primary else cs.surfaceVariant)
+                        .clickable(enabled = canSend) { onSend() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        "发送",
+                        tint = if (canSend) cs.onPrimary else cs.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
+        }
+    }
+}
+
+/** 待发附件小标签（点一下移除）。 */
+@Composable
+private fun AttachmentChip(att: PendingAtt, onRemove: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = cs.surfaceVariant,
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { onRemove() }
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(if (att.isImage) "📷" else "📎", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(4.dp))
+            Text(
+                att.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 130.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Filled.Close, "移除", modifier = Modifier.size(13.dp), tint = cs.onSurfaceVariant)
         }
     }
 }
@@ -1222,4 +1336,61 @@ private fun formatTime(iso: String): String {
     } catch (e: Exception) {
         iso
     }
+}
+
+// ==================== 附件（E 组）====================
+// AGH 的 ContentBlock 支持 image/file，都是 base64 + mimeType：
+//   {"type":"image","data":"<base64>","mimeType":"image/jpeg"}
+//   {"type":"file","data":"<base64>","mimeType":"application/pdf","name":"报告.pdf"}
+
+/** 待发附件。 */
+private data class PendingAtt(
+    val label: String,
+    val mimeType: String,
+    val base64: String,
+    val isImage: Boolean
+) {
+    /** 组装成 AGH 的 ContentBlock。 */
+    fun toBlock(): org.json.JSONObject = org.json.JSONObject().apply {
+        put("type", if (isImage) "image" else "file")
+        put("data", base64)
+        put("mimeType", mimeType)
+        if (!isImage) put("name", label)   // 文件块必填文件名；图片块不带
+    }
+}
+
+/** 从 URI 读成待发附件（base64）。 */
+private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage: Boolean): PendingAtt {
+    val cr = ctx.contentResolver
+    val name = queryDisplayName(cr, uri) ?: (if (isImage) "图片" else "文件")
+    val mime = cr.getType(uri) ?: (if (isImage) "image/jpeg" else "application/octet-stream")
+    val bytes = try {
+        cr.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+    } catch (e: Exception) {
+        ByteArray(0)
+    }
+    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+    return PendingAtt(name, mime, b64, isImage)
+}
+
+private fun queryDisplayName(cr: android.content.ContentResolver, uri: android.net.Uri): String? {
+    return try {
+        cr.query(uri, null, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) null
+            else {
+                val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (i < 0) null else c.getString(i)
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** 把 base64 解成可显示的位图（图片缩略图用）。 */
+private fun decodeB64Image(b64: String): android.graphics.Bitmap? = try {
+    val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+} catch (e: Exception) {
+    null
 }

@@ -61,12 +61,19 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
+@Suppress("DEPRECATION")
 @Composable
 private fun SettingsScreen(onClose: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences(SettingsActivity.PREFS, Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_SYSTEM) ?: SettingsActivity.THEME_SYSTEM) }
+    // 版本号动态读取，避免与 build.gradle 脱节
+    val appVer = remember {
+        try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
+        } catch (e: Exception) { "?" }
+    }
 
     fun setTheme(t: String) {
         theme = t
@@ -115,7 +122,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
         OptionRow("标准", "", true) {}
 
         GroupTitle("关于")
-        OptionRow("YunoAgent", "v0.1.0 · 你的随身 AGH", false) {}
+        OptionRow("YunoAgent", "v$appVer · 你的随身 AGH", false) {}
     }
 }
 

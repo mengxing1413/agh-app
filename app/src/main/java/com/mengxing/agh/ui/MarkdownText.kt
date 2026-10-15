@@ -14,7 +14,9 @@ private var sharedMarkwon: Markwon? = null
 private fun markwonFor(tv: TextView): Markwon {
     var m = sharedMarkwon
     if (m == null) {
-        m = Markwon.builder(tv.context).usePlugin(TablePlugin.create(tv.context)).build()
+        // 用 applicationContext 构建单例，避免持有首个 TextView 的 Activity context 造成泄漏
+        val appCtx = tv.context.applicationContext
+        m = Markwon.builder(appCtx).usePlugin(TablePlugin.create(appCtx)).build()
         sharedMarkwon = m
     }
     return m

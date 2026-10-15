@@ -355,7 +355,7 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
                 shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
                 border = BorderStroke(1.dp, cs.outlineVariant)
             ) {
-                if (item.text.isEmpty()) {
+                if (item.text.isEmpty() && !item.done) {
                     Row(
                         Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -369,7 +369,9 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
                         Text("正在思考…", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
                     }
                 } else {
-                    MarkdownText(item.text, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+                    // done 但无文本（异常流）兜底，避免"空气泡还在转圈"的观感
+                    val shown = if (item.text.isEmpty()) "（无内容）" else item.text
+                    MarkdownText(shown, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
                 }
             }
             val meta = agentMeta(item)
@@ -726,6 +728,7 @@ private fun SessionSheet(
                     items(shown, key = { it.sessionId }) { s ->
                         SessionRow(
                             s = s,
+                            isCurrent = s.sessionId == state.currentSessionId,
                             onPick = { onPick(s) },
                             onRename = { renameText = s.title; renaming = s },
                             onArchiveToggle = { onArchive(s.sessionId, !s.archived) },
@@ -785,6 +788,7 @@ private fun SessionSheet(
 @Composable
 private fun SessionRow(
     s: AcpClient.SessionInfo,
+    isCurrent: Boolean,
     onPick: () -> Unit,
     onRename: () -> Unit,
     onArchiveToggle: () -> Unit,
@@ -817,12 +821,13 @@ private fun SessionRow(
             Spacer(Modifier.height(2.dp))
             Text(
                 buildString {
+                    if (isCurrent) append("当前会话").append("  ·  ")
                     append(formatTime(s.createdAt))
                     if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条消息")
                     if (s.archived) append("  ·  已归档")
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (s.archived) cs.primary else cs.onSurfaceVariant,
+                color = if (isCurrent || s.archived) cs.primary else cs.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

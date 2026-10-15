@@ -106,6 +106,14 @@ public class AcpClient {
 
     public interface RespCb { void onResult(JSONObject result); void onError(String msg); }
 
+    /** 断线/重连时清掉悬挂的请求回调，避免调用方永远等待。 */
+    private void clearPending(String msg) {
+        if (pending.isEmpty()) return;
+        List<RespCb> cbs = new ArrayList<>(pending.values());
+        pending.clear();
+        main.post(() -> { for (RespCb cb : cbs) cb.onError(msg); });
+    }
+
     public AcpClient() {
         client = new OkHttpClient.Builder()
             .readTimeout(0, TimeUnit.MILLISECONDS) // 长连接不超时
@@ -140,6 +148,7 @@ public class AcpClient {
         ws = client.newWebSocket(req, new WebSocketListener() {
             @Override public void onOpen(WebSocket webSocket, Response response) {
                 retryCount = 0;
+                clearPending("连接中断，请重试");   // 旧连接上悬挂的请求永远不会回来，全部落错误
                 notifyConnected();
                 doInitialize();
             }
@@ -452,7 +461,13 @@ public class AcpClient {
         } catch (Exception e) { notifyError(e.getMessage()); }
     }
 
-    public void newSession(String cwd) {
+    public void newSession(String cwd) { newSession(cwd, null); }
+
+    /**
+     * 新建会话。cb.onResult 在 sessionId 已更新后回调（此时可安全清屏/切换）；
+     * cb.onError 时 sessionId 保持不变（仍连在原会话上）。
+     */
+    public void newSession(String cwd, RespCb cb) {
         // 先查已注册 workspace，取有效 path 做 cwd（传 "." 会被 SEMANTIC_REJECTED）
         request("_agnes/v1/workspace.list", new JSONObject(), new RespCb() {
             public void onResult(JSONObject result) {
@@ -463,15 +478,15 @@ public class AcpClient {
                     if (first != null) path = first.optString("path", null);
                 }
                 if (path != null) defaultCwd = path;
-                doNewSession(path != null ? path : (cwd == null ? "." : cwd));
+                doNewSession(path != null ? path : (cwd == null ? "." : cwd), cb);
             }
             public void onError(String msg) {
-                doNewSession(cwd == null ? "." : cwd);
+                doNewSession(cwd == null ? "." : cwd, cb);
             }
         });
     }
 
-    private void doNewSession(String cwd) {
+    private void doNewSession(String cwd, RespCb cb) {
         try {
             JSONObject params = new JSONObject();
             params.put("cwd", cwd);
@@ -487,10 +502,17 @@ public class AcpClient {
                 public void onResult(JSONObject result) {
                     sessionId = result.optString("sessionId", null);
                     modelName = parseModel(result);
+                    if (cb != null) cb.onResult(result);
                 }
-                public void onError(String msg) { notifyError("创建会话失败：" + msg); }
+                public void onError(String msg) {
+                    if (cb != null) cb.onError(msg);
+                    else notifyError("创建会话失败：" + msg);
+                }
             });
-        } catch (Exception e) { notifyError(e.getMessage()); }
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+            else notifyError(e.getMessage());
+        }
     }
 
     public void prompt(String text) {

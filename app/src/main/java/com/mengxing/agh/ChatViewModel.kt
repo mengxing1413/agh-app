@@ -53,6 +53,7 @@ data class ChatUiState(
     val statusText: String = "连接中…",
     val historyLoaded: Boolean = false,
     val inputEnabled: Boolean = false,
+    val currentSessionId: String? = null,     // 当前正在对话的会话（列表里标"当前"用）
     val sessions: List<AcpClient.SessionInfo> = emptyList(),
     val sessionsLoading: Boolean = false,
     val sessionsError: String? = null,
@@ -93,6 +94,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     private var lastAgentText = ""
     private var lastAgentKey: String? = null         // 本轮最近一条 agent 气泡（补耗时用）
     private var sendStartMs = 0L                     // 本轮 prompt 发出时刻
+    private var everConnected = false                // 是否已成功连接过（区分首连与重连）
 
     init {
         acp.setListener(this)
@@ -104,6 +106,16 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     fun send(text: String) {
         val t = text.trim()
         if (t.isEmpty()) return
+        // 收尾上一轮还没完成的"正在思考"占位（连发两条场景），避免它永远转圈
+        streamingAgentKey?.let { k ->
+            _state.update { s ->
+                s.copy(items = s.items.map { item ->
+                    if (item is ChatItem.AgentBubble && item.key == k && !item.done)
+                        item.copy(text = item.text.ifEmpty { "（已跳过等待）" }, done = true)
+                    else item
+                })
+            }
+        }
         historyMode = false
         userEchoKey = null
         streamingAgentKey = null
@@ -127,13 +139,16 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         userEchoKey = null
         lastAgentText = ""
         _state.update {
-            it.copy(items = emptyList(), historyLoaded = false,
+            it.copy(items = emptyList(), historyLoaded = false, currentSessionId = sid,
                 sessionsOpen = false, statusText = "正在加载历史…")
         }
         acp.loadSession(sid, cwd)
     }
 
-    /** 新建会话：清屏并让服务端开一个全新 session（对齐网页版的"新会话"）。 */
+    /**
+     * 新建会话：先在服务端建好（拿到新 sessionId）再清屏，失败则保持原会话不动。
+     * 顺序反了会出现"屏已清空、消息却打进旧会话"的错位。
+     */
     fun newSession() {
         historyMode = false
         userEchoKey = null
@@ -142,10 +157,24 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         lastAgentKey = null
         sendStartMs = 0L
         _state.update {
-            it.copy(items = emptyList(), historyLoaded = false,
-                sessionsOpen = false, statusText = "新会话", inputEnabled = true)
+            it.copy(sessionsOpen = false, statusText = "正在新建会话…", inputEnabled = false)
         }
-        acp.newSession(".")
+        acp.newSession(".", object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update {
+                    it.copy(items = emptyList(), historyLoaded = false,
+                        statusText = "新会话", inputEnabled = true,
+                        currentSessionId = acp.getSessionId())
+                }
+            }
+
+            override fun onError(msg: String?) {
+                _state.update {
+                    it.copy(statusText = "新会话创建失败：" + (msg ?: ""),
+                        inputEnabled = acp.getSessionId() != null)
+                }
+            }
+        })
     }
 
     fun openSessions() {
@@ -154,7 +183,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     }
 
     fun closeSessions() {
-        _state.update { it.copy(sessionsOpen = false) }
+        _state.update { it.copy(sessionsOpen = false, sessionsNotice = null) }
     }
 
     fun refreshSessions() {
@@ -205,7 +234,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
 
     /** 重命名会话（成功后刷新列表）。 */
     fun renameSession(sid: String, title: String) {
-        val t = title.trim()
+        val t = title.trim().take(256)   // 服务端 session/rename 上限 256
         if (t.isEmpty()) { _state.update { it.copy(sessionsNotice = "标题不能为空") }; return }
         acp.renameSession(sid, t, object : AcpClient.RespCb {
             override fun onResult(result: org.json.JSONObject) { refreshSessions() }
@@ -268,10 +297,35 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     // ==================== AcpClient.Listener ====================
 
     override fun onConnected() {
-        _state.update {
-            it.copy(conn = ConnState.CONNECTED, statusText = "已连接", inputEnabled = true)
+        // 重连（之前连过且已有会话）时不再新建会话——否则会静默把当前会话换掉，
+        // 造成"屏上是旧对话、消息却打进新会话"的错位，还会在服务端堆一串空会话。
+        val reconnected = everConnected && acp.getSessionId() != null
+        everConnected = true
+        if (reconnected) {
+            _state.update {
+                it.copy(conn = ConnState.CONNECTED, statusText = "已重新连接", inputEnabled = true)
+            }
+            return
         }
-        acp.newSession(".")
+        _state.update {
+            it.copy(conn = ConnState.CONNECTED, statusText = "已连接", inputEnabled = false)
+        }
+        // 首次连接：建一个全新会话，成功后再开输入
+        acp.newSession(".", object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update {
+                    it.copy(items = emptyList(), statusText = "新会话", inputEnabled = true,
+                        currentSessionId = acp.getSessionId())
+                }
+            }
+
+            override fun onError(msg: String?) {
+                _state.update {
+                    it.copy(statusText = "会话初始化失败：" + (msg ?: ""),
+                        inputEnabled = acp.getSessionId() != null)
+                }
+            }
+        })
     }
 
     override fun onMessageChunk(text: String) {
@@ -333,7 +387,10 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
 
     override fun onSessionLoaded(sessionId: String) {
         historyMode = false
-        _state.update { it.copy(historyLoaded = true, statusText = "已连接 · 历史会话") }
+        _state.update {
+            it.copy(historyLoaded = true, statusText = "已连接 · 历史会话",
+                currentSessionId = sessionId)
+        }
     }
 
     override fun onToolCall(
@@ -369,6 +426,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
                     if (item is ChatItem.AgentBubble && item.key == k)
                         item.copy(
                             done = true,
+                            text = if (item.text.isEmpty()) "（本轮没有文本回复）" else item.text,
                             model = item.model ?: model,
                             elapsedMs = if (elapsed > 0L) elapsed else item.elapsedMs
                         )
@@ -381,6 +439,21 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     }
 
     override fun onError(msg: String) {
+        // 若当前有"正在思考"占位气泡，就地把它改成错误提示（否则它会一直转圈，
+        // 且后续文本还会被追加进这条错误气泡）
+        val k = streamingAgentKey
+        if (k != null) {
+            streamingAgentKey = null
+            sendStartMs = 0L
+            _state.update { s ->
+                s.copy(items = s.items.map { item ->
+                    if (item is ChatItem.AgentBubble && item.key == k)
+                        item.copy(text = "❌ " + msg, done = true)
+                    else item
+                })
+            }
+            return
+        }
         val key = "e" + ids.incrementAndGet()
         _state.update { it.copy(items = it.items + ChatItem.AgentBubble(key, "❌ " + msg, true)) }
     }

@@ -43,11 +43,17 @@ public class AcpClient {
     /** 会话元信息（SessionMeta，来自 _agnes/v1/session.list）。 */
     public static class SessionInfo {
         public final String sessionId, title, cwd, createdAt;
-        public SessionInfo(String sessionId, String title, String cwd, String createdAt) {
+        public final int lastSeq;          // 会话消息数（也用于 fork 的 at 边界）
+        public final boolean archived;     // 是否已归档
+
+        public SessionInfo(String sessionId, String title, String cwd, String createdAt,
+                           int lastSeq, boolean archived) {
             this.sessionId = sessionId;
             this.title = title;
             this.cwd = cwd;
             this.createdAt = createdAt;
+            this.lastSeq = lastSeq;
+            this.archived = archived;
         }
     }
 
@@ -356,10 +362,11 @@ public class AcpClient {
      * params: SessionListParams { q?, cursor?, limit? }（additionalProperties:false，只传合法字段）
      * result: PageSessionMeta { items:[SessionMeta], next? }
      */
-    public void listSessions(SessionsCb cb) {
+    public void listSessions(String cursor, SessionsCb cb) {
         try {
             JSONObject params = new JSONObject();
             params.put("limit", 100);
+            if (cursor != null && !cursor.isEmpty()) params.put("cursor", cursor);
             request("_agnes/v1/session.list", params, new RespCb() {
                 public void onResult(JSONObject result) {
                     List<SessionInfo> list = new ArrayList<>();
@@ -372,7 +379,9 @@ public class AcpClient {
                                 o.optString("sessionId", ""),
                                 o.optString("title", ""),
                                 o.optString("cwd", ""),
-                                o.optString("createdAt", "")));
+                                o.optString("createdAt", ""),
+                                o.optInt("lastSeq", 0),
+                                o.optBoolean("archived", false)));
                         }
                     }
                     String next = result.optString("next", "");
@@ -380,6 +389,42 @@ public class AcpClient {
                 }
                 public void onError(String msg) { if (cb != null) cb.onError(msg); }
             });
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /** 不带 cursor 的首屏拉取。 */
+    public void listSessions(SessionsCb cb) { listSessions(null, cb); }
+
+    /** 重命名会话（_agnes/v1/session.rename；title 长度 1~256）。 */
+    public void renameSession(String sid, String title, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sid);
+            p.put("title", title);
+            request("_agnes/v1/session.rename", p, cb);
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /** 归档 / 取消归档（_agnes/v1/session.archive）。 */
+    public void archiveSession(String sid, boolean archived, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sid);
+            p.put("archived", archived);
+            request("_agnes/v1/session.archive", p, cb);
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /**
+     * 分叉会话（_agnes/v1/session.fork）：从 at 指定边界分出一个新会话。
+     * 实测 at 必须是「已完成 turn/end」的 seq，传会话末尾的 lastSeq 即可成功。
+     */
+    public void forkSession(String sid, int at, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sid);
+            p.put("at", at);
+            request("_agnes/v1/session.fork", p, cb);
         } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
     }
 

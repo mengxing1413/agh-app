@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
     private static final String AUTH_USER = "agh";
     private static final String AUTH_PASS = "11ad3c6798ca7e19";
-    public static final String VERSION = "0.1.4";
+    public static final String VERSION = "0.1.5";
 
     private WebView web;
     private SwipeRefreshLayout swipe;

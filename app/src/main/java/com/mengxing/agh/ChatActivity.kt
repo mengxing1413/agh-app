@@ -38,8 +38,13 @@ import androidx.compose.material.icons.outlined.AddComment
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -139,7 +144,14 @@ fun ChatScreen(vm: ChatViewModel) {
             onPick = { s -> vm.openSession(s.sessionId, s.cwd) },
             onNewSession = { vm.newSession() },
             onDismiss = { vm.closeSessions() },
-            onRetry = { vm.refreshSessions() }
+            onRetry = { vm.refreshSessions() },
+            onQuery = { q -> vm.setSessionsQuery(q) },
+            onToggleArchived = { vm.toggleSessionsArchived() },
+            onLoadMore = { vm.loadMoreSessions() },
+            onRename = { sid, title -> vm.renameSession(sid, title) },
+            onArchive = { sid, archived -> vm.archiveSession(sid, archived) },
+            onFork = { s -> vm.forkSession(s) },
+            onClearNotice = { vm.clearSessionsNotice() }
         )
     }
 }
@@ -573,10 +585,40 @@ private fun SessionSheet(
     onPick: (AcpClient.SessionInfo) -> Unit,
     onNewSession: () -> Unit,
     onDismiss: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onQuery: (String) -> Unit,
+    onToggleArchived: () -> Unit,
+    onLoadMore: () -> Unit,
+    onRename: (String, String) -> Unit,
+    onArchive: (String, Boolean) -> Unit,
+    onFork: (AcpClient.SessionInfo) -> Unit,
+    onClearNotice: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var renaming by remember { mutableStateOf<AcpClient.SessionInfo?>(null) }
+    var renameText by remember { mutableStateOf("") }
+
+    // 本地过滤：搜索(title/sessionId) + 归档开关。服务端 q 实测不返回结果，故在 App 内做。
+    val shown = remember(state.sessions, state.sessionsQuery, state.sessionsShowArchived) {
+        state.sessions.filter { s ->
+            (state.sessionsShowArchived || !s.archived) && (
+                state.sessionsQuery.isBlank() ||
+                    s.title.contains(state.sessionsQuery, ignoreCase = true) ||
+                    s.sessionId.contains(state.sessionsQuery, ignoreCase = true)
+                )
+        }
+    }
+
+    // 操作结果提示 3 秒后自动消失
+    val notice = state.sessionsNotice
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            kotlinx.coroutines.delay(3000)
+            onClearNotice()
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -592,6 +634,7 @@ private fun SessionSheet(
                 color = cs.onSurface
             )
             Spacer(Modifier.height(12.dp))
+
             Surface(
                 color = cs.primary,
                 shape = RoundedCornerShape(50),
@@ -608,7 +651,52 @@ private fun SessionSheet(
                     Text("新建会话", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimary)
                 }
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(12.dp))
+
+            // 搜索 + 归档开关
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = cs.surfaceVariant,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    BasicTextField(
+                        value = state.sessionsQuery,
+                        onValueChange = onQuery,
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
+                        cursorBrush = SolidColor(cs.primary),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        decorationBox = { inner ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Search, null, tint = cs.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Box(Modifier.weight(1f)) {
+                                    if (state.sessionsQuery.isEmpty()) {
+                                        Text("搜索会话…", color = cs.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    inner()
+                                }
+                            }
+                        }
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = onToggleArchived) {
+                    Text(
+                        if (state.sessionsShowArchived) "隐藏归档" else "显示归档",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (state.sessionsShowArchived) cs.primary else cs.onSurfaceVariant
+                    )
+                }
+            }
+
+            notice?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = cs.primary, style = MaterialTheme.typography.labelMedium)
+            }
+            Spacer(Modifier.height(6.dp))
+
             when {
                 state.sessionsLoading -> Box(
                     Modifier.fillMaxWidth().padding(24.dp),
@@ -624,28 +712,90 @@ private fun SessionSheet(
                     TextButton(onClick = onRetry) { Text("重试") }
                 }
 
-                state.sessions.isEmpty() -> Text(
-                    "暂无历史会话",
+                shown.isEmpty() -> Text(
+                    when {
+                        state.sessions.isNotEmpty() && state.sessionsQuery.isNotBlank() -> "没有匹配的会话"
+                        state.sessions.isNotEmpty() -> "没有非归档会话，可点「显示归档」查看"
+                        else -> "暂无历史会话"
+                    },
                     color = cs.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 16.dp)
                 )
 
                 else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    items(state.sessions, key = { it.sessionId }) { s ->
-                        SessionRow(s) { onPick(s) }
+                    items(shown, key = { it.sessionId }) { s ->
+                        SessionRow(
+                            s = s,
+                            onPick = { onPick(s) },
+                            onRename = { renameText = s.title; renaming = s },
+                            onArchiveToggle = { onArchive(s.sessionId, !s.archived) },
+                            onFork = { onFork(s) }
+                        )
+                    }
+                    if (state.sessionsHasMore || state.sessionsLoadingMore) {
+                        item {
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (state.sessionsLoadingMore) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = cs.primary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                TextButton(onClick = onLoadMore) { Text("加载更多") }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
+    // 重命名对话框
+    renaming?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("重命名会话") },
+            text = {
+                Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
+                    BasicTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = cs.onSurface),
+                        cursorBrush = SolidColor(cs.primary),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRename(target.sessionId, renameText)
+                    renaming = null
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("取消") } }
+        )
+    }
 }
 
 @Composable
-private fun SessionRow(s: AcpClient.SessionInfo, onClick: () -> Unit) {
+private fun SessionRow(
+    s: AcpClient.SessionInfo,
+    onPick: () -> Unit,
+    onRename: () -> Unit,
+    onArchiveToggle: () -> Unit,
+    onFork: () -> Unit
+) {
     val cs = MaterialTheme.colorScheme
+    var menu by remember { mutableStateOf(false) }
+
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
+            .clickable { onPick() }
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -665,7 +815,31 @@ private fun SessionRow(s: AcpClient.SessionInfo, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(2.dp))
-            Text(formatTime(s.createdAt), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+            Text(
+                buildString {
+                    append(formatTime(s.createdAt))
+                    if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条消息")
+                    if (s.archived) append("  ·  已归档")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (s.archived) cs.primary else cs.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Box {
+            IconButton(onClick = { menu = true }) {
+                Icon(Icons.Outlined.MoreVert, "更多操作", tint = cs.onSurfaceVariant)
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename() })
+                DropdownMenuItem(
+                    text = { Text(if (s.archived) "取消归档" else "归档") },
+                    onClick = { menu = false; onArchiveToggle() }
+                )
+                DropdownMenuItem(text = { Text("分叉到新会话") }, onClick = { menu = false; onFork() })
+            }
         }
     }
 }

@@ -56,7 +56,14 @@ data class ChatUiState(
     val sessions: List<AcpClient.SessionInfo> = emptyList(),
     val sessionsLoading: Boolean = false,
     val sessionsError: String? = null,
-    val sessionsOpen: Boolean = false
+    val sessionsOpen: Boolean = false,
+    // —— 会话管理（A 组）——
+    val sessionsCursor: String = "",          // 分页游标（服务端 next）
+    val sessionsHasMore: Boolean = false,
+    val sessionsLoadingMore: Boolean = false,
+    val sessionsQuery: String = "",           // 本地搜索词（服务端 q 实测不工作）
+    val sessionsShowArchived: Boolean = false, // 是否显示已归档
+    val sessionsNotice: String? = null        // 操作结果提示
 )
 
 /**
@@ -151,14 +158,91 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
     }
 
     fun refreshSessions() {
-        _state.update { it.copy(sessionsLoading = true, sessionsError = null) }
-        acp.listSessions(object : AcpClient.SessionsCb {
+        _state.update {
+            it.copy(sessionsLoading = true, sessionsError = null,
+                sessionsCursor = "", sessionsHasMore = false, sessionsLoadingMore = false)
+        }
+        acp.listSessions(null, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
-                _state.update { it.copy(sessions = sessions.toList(), sessionsLoading = false) }
+                _state.update {
+                    it.copy(sessions = sessions.toList(), sessionsLoading = false,
+                        sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
+                }
             }
 
             override fun onError(msg: String?) {
                 _state.update { it.copy(sessionsLoading = false, sessionsError = msg ?: "加载失败") }
+            }
+        })
+    }
+
+    /** 拉取下一页（分页）。 */
+    fun loadMoreSessions() {
+        val s = _state.value
+        if (s.sessionsCursor.isEmpty() || s.sessionsLoadingMore) return
+        _state.update { it.copy(sessionsLoadingMore = true) }
+        acp.listSessions(s.sessionsCursor, object : AcpClient.SessionsCb {
+            override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
+                _state.update {
+                    it.copy(sessions = it.sessions + sessions, sessionsLoadingMore = false,
+                        sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
+                }
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(sessionsLoadingMore = false, sessionsNotice = msg ?: "加载失败") }
+            }
+        })
+    }
+
+    fun setSessionsQuery(q: String) { _state.update { it.copy(sessionsQuery = q) } }
+
+    fun toggleSessionsArchived() {
+        _state.update { it.copy(sessionsShowArchived = !it.sessionsShowArchived) }
+    }
+
+    fun clearSessionsNotice() { _state.update { it.copy(sessionsNotice = null) } }
+
+    /** 重命名会话（成功后刷新列表）。 */
+    fun renameSession(sid: String, title: String) {
+        val t = title.trim()
+        if (t.isEmpty()) { _state.update { it.copy(sessionsNotice = "标题不能为空") }; return }
+        acp.renameSession(sid, t, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) { refreshSessions() }
+            override fun onError(msg: String?) {
+                _state.update { it.copy(sessionsNotice = msg ?: "重命名失败") }
+            }
+        })
+    }
+
+    /** 归档 / 取消归档。 */
+    fun archiveSession(sid: String, archived: Boolean) {
+        acp.archiveSession(sid, archived, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update { it.copy(sessionsNotice = if (archived) "已归档" else "已取消归档") }
+                refreshSessions()
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(sessionsNotice = msg ?: "操作失败") }
+            }
+        })
+    }
+
+    /** 分叉：从会话末尾（lastSeq）分出一个新会话。 */
+    fun forkSession(s: AcpClient.SessionInfo) {
+        if (s.lastSeq < 1) {
+            _state.update { it.copy(sessionsNotice = "会话还没有内容，无法分叉") }
+            return
+        }
+        acp.forkSession(s.sessionId, s.lastSeq, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update { it.copy(sessionsNotice = "已分叉出新会话") }
+                refreshSessions()
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(sessionsNotice = msg ?: "分叉失败") }
             }
         })
     }

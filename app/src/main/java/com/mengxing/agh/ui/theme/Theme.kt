@@ -84,6 +84,48 @@ private val SKINS = mapOf(
         Color(0xFF9AA4B2), Color(0xFF2A3038), Color(0xFFE4E7EB),
         Color(0xFFF5F6F8), Color(0xFFFFFFFF), Color(0xFFEBEDF1), Color(0xFFDDE1E7),
         Color(0xFF101216), Color(0xFF1A1D22), Color(0xFF23272E), Color(0xFF323840)
+    ),
+    // —— 社区主题（配色取自 dsh-theme-pack，明暗双套）———————————
+    // 深色侧用社区原色，浅色侧按同一强调色派生，保证浅/深都协调。
+    "nord" to Skin(
+        Color(0xFF5E81AC), Color.White, Color(0xFFDDE5EE), Color(0xFF2E3440),
+        Color(0xFF81A1C1), Color(0xFFE7EDF3), Color(0xFF2E3440),
+        Color(0xFF81A1C1), Color(0xFF2E3440), Color(0xFF3B4252), Color(0xFFD8DEE9),
+        Color(0xFF88C0D0), Color(0xFF434C5E), Color(0xFFD8DEE9),
+        Color(0xFFEEF1F5), Color(0xFFFFFFFF), Color(0xFFE3E8EE), Color(0xFFD3DAE2),
+        Color(0xFF2E3440), Color(0xFF3B4252), Color(0xFF434C5E), Color(0xFF4C566A)
+    ),
+    "dracula" to Skin(
+        Color(0xFF7C4DCC), Color.White, Color(0xFFECE4FB), Color(0xFF282A36),
+        Color(0xFFBD93F9), Color(0xFFF0E9FD), Color(0xFF282A36),
+        Color(0xFFBD93F9), Color(0xFF282A36), Color(0xFF44475A), Color(0xFFF8F8F2),
+        Color(0xFFFF79C6), Color(0xFF4E5266), Color(0xFFF8F8F2),
+        Color(0xFFF5F3FA), Color(0xFFFFFFFF), Color(0xFFEBE7F3), Color(0xFFDDD7EA),
+        Color(0xFF282A36), Color(0xFF2F3241), Color(0xFF44475A), Color(0xFF4E5266)
+    ),
+    "tokyo" to Skin(
+        Color(0xFF3B6FD4), Color.White, Color(0xFFDFE8FB), Color(0xFF1A1B26),
+        Color(0xFF7AA2F7), Color(0xFFE8EEFC), Color(0xFF1A1B26),
+        Color(0xFF7AA2F7), Color(0xFF1A1B26), Color(0xFF1F2335), Color(0xFFC0CAF5),
+        Color(0xFFBB9AF7), Color(0xFF292E42), Color(0xFFC0CAF5),
+        Color(0xFFEEF1F8), Color(0xFFFFFFFF), Color(0xFFE2E7F1), Color(0xFFD2D9E6),
+        Color(0xFF1A1B26), Color(0xFF1F2335), Color(0xFF292E42), Color(0xFF3B4261)
+    ),
+    "catppuccin" to Skin(
+        Color(0xFF6C8FD6), Color.White, Color(0xFFE2E9FA), Color(0xFF1E1E2E),
+        Color(0xFF89B4FA), Color(0xFFEAF0FC), Color(0xFF1E1E2E),
+        Color(0xFF89B4FA), Color(0xFF1E1E2E), Color(0xFF313244), Color(0xFFCDD6F4),
+        Color(0xFFCBA6F7), Color(0xFF45475A), Color(0xFFCDD6F4),
+        Color(0xFFF2F3F9), Color(0xFFFFFFFF), Color(0xFFE8EAF3), Color(0xFFD9DCE8),
+        Color(0xFF1E1E2E), Color(0xFF262738), Color(0xFF313244), Color(0xFF45475A)
+    ),
+    "everforest" to Skin(
+        Color(0xFF4F8A70), Color.White, Color(0xFFDDEEE6), Color(0xFF2D353B),
+        Color(0xFF7FBBB3), Color(0xFFE5F2EE), Color(0xFF2D353B),
+        Color(0xFF7FBBB3), Color(0xFF2D353B), Color(0xFF343F44), Color(0xFFD3C6AA),
+        Color(0xFFA7C080), Color(0xFF3D484D), Color(0xFFD3C6AA),
+        Color(0xFFEEF4F1), Color(0xFFFFFFFF), Color(0xFFE2EBE7), Color(0xFFD2DED9),
+        Color(0xFF2D353B), Color(0xFF343F44), Color(0xFF3D484D), Color(0xFF475258)
     )
 )
 

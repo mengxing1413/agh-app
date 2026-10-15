@@ -668,7 +668,7 @@ private fun InputBar(
             ) {
                 // 附件按钮：发图片 / 发文件
                 Box {
-                    IconButton(onClick = { attachMenu = true }, enabled = enabled) {
+                    IconButton(onClick = { attachMenu = true }) {
                         Icon(Icons.Outlined.AttachFile, "添加附件", tint = cs.onSurfaceVariant)
                     }
                     DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
@@ -688,7 +688,9 @@ private fun InputBar(
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
-                        enabled = enabled,
+                        // 输入框始终可打字：会话未就绪只禁用发送按钮，
+                        // 否则状态没同步好就会出现"打不了字"的失灵。
+                        enabled = true,
                         textStyle = TextStyle(color = cs.onSurface, fontSize = 15.sp),
                         cursorBrush = SolidColor(cs.primary),
                         maxLines = 4,

@@ -268,13 +268,36 @@ private fun hostOf(url: String): String {
 @Composable
 private fun SkinRow(selected: String, onPick: (String) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val skins = listOf(
+    val basic = listOf(
         Triple("green", "豆沙绿", YunoSkinDot(Color(0xFF7C9F69))),
         Triple("blue", "海洋蓝", YunoSkinDot(Color(0xFF4A82C4))),
         Triple("orange", "暖橙", YunoSkinDot(Color(0xFFE08A3C))),
         Triple("violet", "紫罗兰", YunoSkinDot(Color(0xFF8E6BC8))),
         Triple("slate", "石墨灰", YunoSkinDot(Color(0xFF6B7280)))
     )
+    // 社区主题：配色取自 dsh-theme-pack（明暗双套已内置）
+    val community = listOf(
+        Triple("nord", "北境极光", YunoSkinDot(Color(0xFF81A1C1))),
+        Triple("dracula", "德古拉", YunoSkinDot(Color(0xFFBD93F9))),
+        Triple("tokyo", "东京夜", YunoSkinDot(Color(0xFF7AA2F7))),
+        Triple("catppuccin", "猫布奇诺", YunoSkinDot(Color(0xFF89B4FA))),
+        Triple("everforest", "永恒森林", YunoSkinDot(Color(0xFF7FBBB3)))
+    )
+    SkinRowLine(basic, selected, onPick)
+    Spacer(Modifier.height(6.dp))
+    SkinRowLine(community, selected, onPick)
+    Spacer(Modifier.height(4.dp))
+    Text("下排为社区主题（取自 dsh 社区配色，明暗双套）",
+        style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+}
+
+@Composable
+private fun SkinRowLine(
+    skins: List<Triple<String, String, YunoSkinDot>>,
+    selected: String,
+    onPick: (String) -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         for ((k, label, dot) in skins) {

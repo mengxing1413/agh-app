@@ -653,7 +653,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         historyMode = false
         persistSession()
         _state.update {
+            // inputEnabled 必须在这里放行：首连时是 false，若不放行，
+            // 走"恢复会话/打开历史会话"路径后输入框会一直禁用（表现为"打不了字"）。
             it.copy(historyLoaded = true, statusText = "已连接 · 历史会话",
+                inputEnabled = true,
                 currentSessionId = sessionId,
                 sessionModel = acp.getModelName() ?: it.sessionModel)
         }

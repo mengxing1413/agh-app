@@ -249,9 +249,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         acp.listSessions(s.sessionsCursor, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
                 val visible = sessions.filter { it.lastSeq > 0 }
-                val merged = it.sessionStats + loadStats(visible.map { s -> s.sessionId })
+                val fresh = loadStats(visible.map { s -> s.sessionId })
                 _state.update {
-                    it.copy(sessions = it.sessions + visible, sessionStats = merged, sessionsLoadingMore = false,
+                    it.copy(sessions = it.sessions + visible, sessionStats = it.sessionStats + fresh,
+                        sessionsLoadingMore = false,
                         sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
                 }
             }

@@ -97,6 +97,8 @@ public class AcpClient {
     private String defaultCwd;
     /** 当前会话使用的模型/预设名（尽力解析，可能为 null）。 */
     private volatile String modelName;
+    /** profile 里的默认模型（会话未产出内容时兜底显示用）。 */
+    private volatile String fallbackModel;
 
     // —— 重连状态 ——
     private String url, user, pass;
@@ -123,7 +125,8 @@ public class AcpClient {
 
     public void setListener(Listener l) { this.listener = l; }
     public String getSessionId() { return sessionId; }
-    public String getModelName() { return modelName; }
+    public String getDefaultCwd() { return defaultCwd; }
+    public String getModelName() { return modelName != null ? modelName : fallbackModel; }
 
     // —— 连接 / 重连 ——
     public void connect(String url, String user, String pass) {
@@ -334,6 +337,43 @@ public class AcpClient {
         return null;
     }
 
+    /** 模型名回调（可能为 null）。 */
+    public interface ModelCb { void onModel(String model); }
+
+    /**
+     * 拉取 AGH profile 里的默认模型名（本地档只配 agnes 系列）。
+     * 取带 defaultSettings 的首个模型；没有则取列表第一个；解析不到回调 null。
+     * 用途：会话尚无产出时，气泡下也能显示"当前模型"。
+     */
+    public void fetchProfileDefaultModel(ModelCb cb) {
+        request("_agnes/v1/apis.list", new JSONObject(), new RespCb() {
+            public void onResult(JSONObject result) {
+                String m = parseProfileModel(result);
+                if (m != null) fallbackModel = m;
+                if (cb != null) cb.onModel(m);
+            }
+            public void onError(String msg) { if (cb != null) cb.onModel(null); }
+        });
+    }
+
+    private String parseProfileModel(JSONObject result) {
+        if (result == null) return null;
+        JSONObject profile = result.optJSONObject("profile");
+        if (profile == null) return null;
+        JSONArray models = profile.optJSONArray("models");
+        if (models == null || models.length() == 0) return null;
+        String first = null;
+        for (int i = 0; i < models.length(); i++) {
+            JSONObject mo = models.optJSONObject(i);
+            if (mo == null) continue;
+            String id = mo.optString("id", "");
+            if (id.isEmpty()) continue;
+            if (first == null) first = id;
+            if (mo.has("defaultSettings")) return id;   // 服务端标注的默认档
+        }
+        return first;
+    }
+
     private String extractText(JSONObject update) {
         JSONObject content = update.optJSONObject("content");
         if (content != null) {
@@ -441,8 +481,21 @@ public class AcpClient {
      * 加载历史会话（ACP session/load）：服务端会通过 session/update 流式重放全部历史消息。
      * params: LoadSessionRequest { mcpServers*, cwd*, sessionId* }
      */
-    public void loadSession(String sid, String cwd) {
-        if (sid == null || sid.isEmpty()) { notifyError("会话 id 无效"); return; }
+    public void loadSession(String sid, String cwd) { loadSession(sid, cwd, null, false); }
+    public void loadSession(String sid, String cwd, RespCb cb) { loadSession(sid, cwd, cb, false); }
+
+    /**
+     * 加载历史会话（ACP session/load）：服务端会通过 session/update 流式重放全部历史消息。
+     * params: LoadSessionRequest { mcpServers*, cwd*, sessionId* }
+     * cb.onError 供调用方在【恢复上次会话】失败时回退到新建会话；
+     * quiet=true 时不弹错误气泡（用于启动时静默恢复尝试）。
+     */
+    public void loadSession(String sid, String cwd, RespCb cb, boolean quiet) {
+        if (sid == null || sid.isEmpty()) {
+            if (!quiet) notifyError("会话 id 无效");
+            if (cb != null) cb.onError("会话 id 无效");
+            return;
+        }
         try {
             String useCwd = (cwd != null && !cwd.isEmpty())
                 ? cwd : (defaultCwd != null ? defaultCwd : ".");
@@ -455,10 +508,17 @@ public class AcpClient {
                     sessionId = sid;   // 后续 prompt 打到该会话
                     modelName = parseModel(result);
                     notifySessionLoaded(sid);
+                    if (cb != null) cb.onResult(result);
                 }
-                public void onError(String msg) { notifyError("加载会话失败：" + msg); }
+                public void onError(String msg) {
+                    if (!quiet) notifyError("加载会话失败：" + msg);
+                    if (cb != null) cb.onError(msg);
+                }
             });
-        } catch (Exception e) { notifyError(e.getMessage()); }
+        } catch (Exception e) {
+            if (!quiet) notifyError(e.getMessage());
+            if (cb != null) cb.onError(e.getMessage());
+        }
     }
 
     public void newSession(String cwd) { newSession(cwd, null); }

@@ -296,7 +296,7 @@ private fun MessageList(
         items(state.items, key = { it.key }) { item ->
             when (item) {
                 is ChatItem.UserBubble -> UserBubbleRow(item)
-                is ChatItem.AgentBubble -> AgentBubbleRow(item)
+                is ChatItem.AgentBubble -> AgentBubbleRow(item, state.sessionModel)
                 is ChatItem.ToolCard -> ToolCardView(item)
                 is ChatItem.PermissionCard ->
                     PermissionCardView(item) { oid, note -> onRespond(item.reqId, oid, note) }
@@ -334,7 +334,7 @@ private fun UserBubbleRow(item: ChatItem.UserBubble) {
 }
 
 @Composable
-private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
+private fun AgentBubbleRow(item: ChatItem.AgentBubble, fallbackModel: String?) {
     val cs = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth(),
@@ -374,7 +374,7 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
                     MarkdownText(shown, cs.onSurface, Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
                 }
             }
-            val meta = agentMeta(item)
+            val meta = agentMeta(item, fallbackModel)
             if (meta.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -388,10 +388,11 @@ private fun AgentBubbleRow(item: ChatItem.AgentBubble) {
     }
 }
 
-private fun agentMeta(item: ChatItem.AgentBubble): String {
+private fun agentMeta(item: ChatItem.AgentBubble, fallbackModel: String?): String {
     val parts = mutableListOf<String>()
     if (item.time.isNotEmpty()) parts.add(item.time)
-    if (!item.model.isNullOrEmpty()) parts.add(item.model)
+    val model = if (!item.model.isNullOrEmpty()) item.model else fallbackModel
+    if (!model.isNullOrEmpty()) parts.add(model)
     if (item.done) {
         item.elapsedMs?.let {
             parts.add("用时 " + java.lang.String.format(java.util.Locale.US, "%.1f", it / 1000.0) + " 秒")

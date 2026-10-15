@@ -1,6 +1,8 @@
 package com.mengxing.agh
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +56,7 @@ data class ChatUiState(
     val historyLoaded: Boolean = false,
     val inputEnabled: Boolean = false,
     val currentSessionId: String? = null,     // 当前正在对话的会话（列表里标"当前"用）
+    val sessionModel: String? = null,         // 当前会话模型（气泡 meta 兜底显示）
     val sessions: List<AcpClient.SessionInfo> = emptyList(),
     val sessionsLoading: Boolean = false,
     val sessionsError: String? = null,
@@ -73,13 +76,16 @@ data class ChatUiState(
  * 修复：用户消息重复显示——实时发送时本地已立即上屏，服务端回显的 user_message_chunk
  * 只在【历史加载回放】模式（historyMode=true）下才接收，二者不再打架。
  */
-class ChatViewModel : ViewModel(), AcpClient.Listener {
+class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listener {
 
     companion object {
         const val WS_URL =
             "wss://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/__agh_ws"
         const val AUTH_USER = "agh"
         const val AUTH_PASS = "11ad3c6798ca7e19"
+        private const val PREFS = "yuno_agh"
+        private const val KEY_SESSION_ID = "last_session_id"
+        private const val KEY_SESSION_CWD = "last_session_cwd"
     }
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -87,6 +93,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
 
     private val acp = AcpClient()
     private val ids = AtomicLong(0)
+    private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private var streamingAgentKey: String? = null   // 正在流式输出的 agent 气泡
     private var userEchoKey: String? = null          // 历史回放中聚合的用户气泡
@@ -159,22 +166,7 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         _state.update {
             it.copy(sessionsOpen = false, statusText = "正在新建会话…", inputEnabled = false)
         }
-        acp.newSession(".", object : AcpClient.RespCb {
-            override fun onResult(result: org.json.JSONObject) {
-                _state.update {
-                    it.copy(items = emptyList(), historyLoaded = false,
-                        statusText = "新会话", inputEnabled = true,
-                        currentSessionId = acp.getSessionId())
-                }
-            }
-
-            override fun onError(msg: String?) {
-                _state.update {
-                    it.copy(statusText = "新会话创建失败：" + (msg ?: ""),
-                        inputEnabled = acp.getSessionId() != null)
-                }
-            }
-        })
+        startNewSession()
     }
 
     fun openSessions() {
@@ -310,11 +302,41 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
         _state.update {
             it.copy(conn = ConnState.CONNECTED, statusText = "已连接", inputEnabled = false)
         }
-        // 首次连接：建一个全新会话，成功后再开输入
+        // 先取 AGH profile 的默认模型，让气泡下的"模型"信息即时可用（拿不到则留空，不显示）
+        acp.fetchProfileDefaultModel { m ->
+            _state.update { st -> if (st.sessionModel == null) st.copy(sessionModel = m) else st }
+        }
+        // 首次连接：优先恢复上次会话（相当于"主对话"），没有或已失效才新建
+        val savedId = prefs.getString(KEY_SESSION_ID, null)
+        val savedCwd = prefs.getString(KEY_SESSION_CWD, null)
+        if (!savedId.isNullOrEmpty()) {
+            historyMode = true   // 回放历史时才接收用户消息回显（与点开历史会话一致）
+            _state.update { it.copy(statusText = "正在恢复上次会话…") }
+            acp.loadSession(savedId, savedCwd ?: "", object : AcpClient.RespCb {
+                override fun onResult(result: org.json.JSONObject) {
+                    // 状态由 onSessionLoaded 落定，这里只兜底模型
+                    _state.update { st -> st.copy(sessionModel = acp.getModelName() ?: st.sessionModel) }
+                }
+
+                override fun onError(msg: String?) {
+                    // 上次会话已被删除/归档 → 静默回退到新建
+                    _state.update { it.copy(statusText = "上次会话已失效，正在新建…") }
+                    startNewSession()
+                }
+            }, true)
+        } else {
+            startNewSession()
+        }
+    }
+
+    /** 新建会话（启动兜底与用户点 ➕ 共用）：先建好拿到新 id 再清屏。 */
+    private fun startNewSession() {
         acp.newSession(".", object : AcpClient.RespCb {
             override fun onResult(result: org.json.JSONObject) {
+                persistSession()
                 _state.update {
-                    it.copy(items = emptyList(), statusText = "新会话", inputEnabled = true,
+                    it.copy(items = emptyList(), historyLoaded = false,
+                        statusText = "新会话", inputEnabled = true,
                         currentSessionId = acp.getSessionId())
                 }
             }
@@ -326,6 +348,15 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
                 }
             }
         })
+    }
+
+    /** 记住当前会话 id/cwd，供下次启动恢复（实现"主对话"记忆）。 */
+    private fun persistSession() {
+        val sid = acp.getSessionId() ?: return
+        prefs.edit()
+            .putString(KEY_SESSION_ID, sid)
+            .putString(KEY_SESSION_CWD, acp.getDefaultCwd() ?: "")
+            .apply()
     }
 
     override fun onMessageChunk(text: String) {
@@ -387,9 +418,11 @@ class ChatViewModel : ViewModel(), AcpClient.Listener {
 
     override fun onSessionLoaded(sessionId: String) {
         historyMode = false
+        persistSession()
         _state.update {
             it.copy(historyLoaded = true, statusText = "已连接 · 历史会话",
-                currentSessionId = sessionId)
+                currentSessionId = sessionId,
+                sessionModel = acp.getModelName() ?: it.sessionModel)
         }
     }
 

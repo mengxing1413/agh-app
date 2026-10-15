@@ -431,6 +431,13 @@ public class AcpClient {
             JSONObject params = new JSONObject();
             params.put("cwd", cwd);
             params.put("mcpServers", new JSONArray());
+            // ★ 必须带 _meta.sessionKey（随机 UUID）：否则 AGH 按 workspace 路径复用同一个
+            // 固定会话 id，"新建会话"永远建不出独立会话。网页版 app.js 就是靠这个 key 新建的。
+            JSONObject meta = new JSONObject();
+            meta.put("sessionKey", java.util.UUID.randomUUID().toString());
+            JSONObject _meta = new JSONObject();
+            _meta.put("ai.agnes.harness", meta);
+            params.put("_meta", _meta);
             request("session/new", params, new RespCb() {
                 public void onResult(JSONObject result) {
                     sessionId = result.optString("sessionId", null);

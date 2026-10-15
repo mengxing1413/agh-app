@@ -69,6 +69,7 @@ data class ChatUiState(
     val sessionsQuery: String = "",           // 本地搜索词（服务端 q 实测不工作）
     val sessionsShowArchived: Boolean = false, // 是否显示已归档
     val sessionsNotice: String? = null,       // 操作结果提示
+    val sessionStats: Map<String, Pair<Long, Int>> = emptyMap(), // E组本地增强：(最后活跃ms, 真实消息条数)
     // —— 状态条（B 组）：模型 / 用量 / 权限 ——
     val models: List<AcpClient.ModelInfo> = emptyList(),   // 可选模型（apis.list）
     val usage: AcpClient.UsageInfo? = null,                // 当前会话用量快照
@@ -112,6 +113,35 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     private var connConfigId: String? = null         // 当前连接用的配置 id（检测设置页变更）
     private var selectedCwd: String? = null          // 用户选定的工作区（新会话 cwd）
 
+    // —— 会话本地增强（E 组）———————————————————————————
+    // AGH 协议只给「创建时间 + 事件数」，不给「最后活跃时间 + 真实对话条数」，
+    // 但网页版靠服务端排序能定位到"最后对话"。这里在手机本地补记这两个口径：
+    // 发消息时记一笔，列表显示就越用越准；没记录的老会话走创建时间/事件数兜底。
+    private val statsPrefs = app.getSharedPreferences("yuno_session_stats", Context.MODE_PRIVATE)
+
+    /** 发消息时记一笔：更新最后活跃时间 + 真实消息数 +1。 */
+    private fun bumpSessionStat(sid: String?) {
+        if (sid.isNullOrEmpty()) return
+        val raw = statsPrefs.getString(sid, null)
+        val old = raw?.split("|") ?: emptyList()
+        val count = (old.getOrNull(1)?.toIntOrNull() ?: 0) + 1
+        statsPrefs.edit()
+            .putString(sid, System.currentTimeMillis().toString() + "|" + count)
+            .apply()
+    }
+
+    /** 读会话统计：(最后活跃时间 ms, 真实消息条数)；没记录返回 null。 */
+    private fun sessionStat(sid: String): Pair<Long, Int>? {
+        val raw = statsPrefs.getString(sid, null) ?: return null
+        val p = raw.split("|")
+        val ts = p.getOrNull(0)?.toLongOrNull() ?: return null
+        return ts to (p.getOrNull(1)?.toIntOrNull() ?: 0)
+    }
+
+    /** 批量读出列表里这些会话的统计，供 UI 显示。 */
+    private fun loadStats(ids: List<String>): Map<String, Pair<Long, Int>> =
+        ids.mapNotNull { id -> sessionStat(id)?.let { id to it } }.toMap()
+
     init {
         acp.setListener(this)
         val p = AppConfig.activeProfile(app)
@@ -147,6 +177,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         streamingAgentKey = akey
         lastAgentKey = akey
         _state.update { it.copy(items = it.items + ChatItem.AgentBubble(akey, "", false, clock())) }
+        bumpSessionStat(acp.getSessionId())   // E 组：记一笔最后活跃时间 + 真实消息数
         acp.prompt(t)
     }
 
@@ -197,8 +228,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         acp.listSessions(null, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
                 val visible = sessions.filter { it.lastSeq > 0 }   // 过滤空会话（无消息）
+                val stats = loadStats(visible.map { it.sessionId })
                 _state.update {
-                    it.copy(sessions = visible, sessionsLoading = false,
+                    it.copy(sessions = visible, sessionStats = stats, sessionsLoading = false,
                         sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
                 }
             }
@@ -217,8 +249,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         acp.listSessions(s.sessionsCursor, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
                 val visible = sessions.filter { it.lastSeq > 0 }
+                val merged = it.sessionStats + loadStats(visible.map { s -> s.sessionId })
                 _state.update {
-                    it.copy(sessions = it.sessions + visible, sessionsLoadingMore = false,
+                    it.copy(sessions = it.sessions + visible, sessionStats = merged, sessionsLoadingMore = false,
                         sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
                 }
             }

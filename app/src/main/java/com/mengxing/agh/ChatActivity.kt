@@ -1026,6 +1026,7 @@ private fun SessionSheet(
                         SessionRow(
                             s = s,
                             isCurrent = s.sessionId == state.currentSessionId,
+                            stat = state.sessionStats[s.sessionId],
                             onPick = { onPick(s) },
                             onRename = { renameText = s.title; renaming = s },
                             onArchiveToggle = { onArchive(s.sessionId, !s.archived) },
@@ -1087,6 +1088,7 @@ private fun SessionSheet(
 private fun SessionRow(
     s: AcpClient.SessionInfo,
     isCurrent: Boolean,
+    stat: Pair<Long, Int>?,      // E 组本地增强：(最后活跃ms, 真实消息条数)，无记录为 null
     onPick: () -> Unit,
     onRename: () -> Unit,
     onArchiveToggle: () -> Unit,
@@ -1121,8 +1123,12 @@ private fun SessionRow(
             Text(
                 buildString {
                     if (isCurrent) append("当前会话").append("  ·  ")
-                    append(formatTime(s.createdAt))
-                    if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条记录")
+                    // E 组：优先显示「最后活跃时间」（本地记录），没记录退回创建时间
+                    if (stat != null && stat.first > 0) append(formatTime(stat.first.toString()))
+                    else append(formatTime(s.createdAt))
+                    // 真实对话条数（本地统计），没统计到退回事件数并标注为「记录」
+                    if (stat != null && stat.second > 0) append("  ·  ").append(stat.second).append(" 条对话")
+                    else if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条记录")
                     if (s.archived) append("  ·  已删除")
                 },
                 style = MaterialTheme.typography.bodySmall,

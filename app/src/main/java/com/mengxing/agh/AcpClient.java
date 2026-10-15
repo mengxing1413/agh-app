@@ -138,6 +138,11 @@ public class AcpClient {
     private String sessionId;
     /** 最近一次 workspace.list 得到的有效 cwd，供 session/load 回退使用。 */
     private String defaultCwd;
+    /** 用户选定的工作区路径（优先用作新会话 cwd）；null=用 AGH 首个工作区。 */
+    private String preferredCwd;
+
+    public void setPreferredCwd(String p) { this.preferredCwd = p; }
+    public String getPreferredCwd() { return preferredCwd; }
     /** 当前会话使用的模型/预设名（尽力解析，可能为 null）。 */
     private volatile String modelName;
     /** profile 里的默认模型（会话未产出内容时兜底显示用）。 */
@@ -146,6 +151,8 @@ public class AcpClient {
     // —— 重连状态 ——
     private String url, user, pass;
     private boolean manualClose = false;
+    /** 连接代号：每次 openSocket 自增；旧 socket 的回调据此忽略，避免切换连接后重连串台。 */
+    private int gen = 0;
     private int retryCount = 0;
     private Runnable reconnectTask;
 
@@ -182,6 +189,7 @@ public class AcpClient {
     }
 
     private void openSocket() {
+        final int myGen = ++gen;
         String cred = android.util.Base64.encodeToString(
             (user + ":" + pass).getBytes(), android.util.Base64.NO_WRAP);
         Request req = new Request.Builder()
@@ -193,30 +201,35 @@ public class AcpClient {
 
         ws = client.newWebSocket(req, new WebSocketListener() {
             @Override public void onOpen(WebSocket webSocket, Response response) {
+                if (myGen != gen) { try { webSocket.close(1000, "stale"); } catch (Exception e) {} return; }
                 retryCount = 0;
                 clearPending("连接中断，请重试");   // 旧连接上悬挂的请求永远不会回来，全部落错误
                 notifyConnected();
                 doInitialize();
             }
             @Override public void onMessage(WebSocket webSocket, String text) {
+                if (myGen != gen) return;
                 handleMessage(text);
             }
             @Override public void onFailure(WebSocket webSocket, Throwable t, Response r) {
+                if (myGen != gen) return;   // 已切换连接，旧 socket 的失败忽略
                 if (manualClose) notifyClosed(); else scheduleReconnect();
             }
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                if (myGen != gen) return;   // 旧 socket 关闭不触发重连
                 if (manualClose) notifyClosed(); else scheduleReconnect();
             }
         });
     }
 
     private void scheduleReconnect() {
+        final int myGen = gen;
         // 指数退避：1,2,4,8,16,30,30…（秒）
         int delay = (int) Math.min(30, Math.pow(2, retryCount));
         retryCount++;
         notifyReconnecting("连接中断，第 " + retryCount + " 次重连（" + delay + "s 后）…");
         if (reconnectTask != null) main.removeCallbacks(reconnectTask);
-        reconnectTask = () -> { if (!manualClose) openSocket(); };
+        reconnectTask = () -> { if (!manualClose && myGen == gen) openSocket(); };
         main.postDelayed(reconnectTask, delay * 1000L);
     }
 
@@ -487,6 +500,44 @@ public class AcpClient {
     /** 不带 cursor 的首屏拉取。 */
     public void listSessions(SessionsCb cb) { listSessions(null, cb); }
 
+    /** AGH 工作区条目（_agnes/v1/workspace.list 的 items）。 */
+    public static class Workspace {
+        public final String path, name;
+        public Workspace(String path, String name) { this.path = path; this.name = name; }
+    }
+
+    public interface WorkspacesCb {
+        void onResult(List<Workspace> workspaces);
+        void onError(String msg);
+    }
+
+    /** 列出已注册工作区（_agnes/v1/workspace.list → items[{path,...}]）。 */
+    public void listWorkspaces(final WorkspacesCb cb) {
+        request("_agnes/v1/workspace.list", new JSONObject(), new RespCb() {
+            public void onResult(JSONObject result) {
+                List<Workspace> out = new ArrayList<>();
+                JSONArray items = result.optJSONArray("items");
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject o = items.optJSONObject(i);
+                        if (o == null) continue;
+                        String path = o.optString("path", "");
+                        if (path.isEmpty()) path = o.optString("cwd", "");
+                        if (path.isEmpty()) continue;
+                        String name = o.optString("name", "");
+                        if (name.isEmpty()) {
+                            int slash = path.lastIndexOf('/');
+                            name = slash >= 0 ? path.substring(slash + 1) : path;
+                        }
+                        out.add(new Workspace(path, name));
+                    }
+                }
+                if (cb != null) cb.onResult(out);
+            }
+            public void onError(String msg) { if (cb != null) cb.onError(msg); }
+        });
+    }
+
     // —— 模型 / 权限 / 用量（B 组）——
 
     /** 拉取可选模型列表（profile.models：id / route / contextWindow）。 */
@@ -681,10 +732,14 @@ public class AcpClient {
         request("_agnes/v1/workspace.list", new JSONObject(), new RespCb() {
             public void onResult(JSONObject result) {
                 String path = null;
-                JSONArray items = result.optJSONArray("items");
-                if (items != null && items.length() > 0) {
-                    JSONObject first = items.optJSONObject(0);
-                    if (first != null) path = first.optString("path", null);
+                if (preferredCwd != null && !preferredCwd.isEmpty()) {
+                    path = preferredCwd;   // 用户选定的工作区优先
+                } else {
+                    JSONArray items = result.optJSONArray("items");
+                    if (items != null && items.length() > 0) {
+                        JSONObject first = items.optJSONObject(0);
+                        if (first != null) path = first.optString("path", null);
+                    }
                 }
                 if (path != null) defaultCwd = path;
                 doNewSession(path != null ? path : (cwd == null ? "." : cwd), cb);

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.concurrent.atomic.AtomicLong
+import com.mengxing.agh.data.AppConfig
 
 /** 消息流里的一个条目。 */
 sealed interface ChatItem {
@@ -72,7 +73,12 @@ data class ChatUiState(
     val models: List<AcpClient.ModelInfo> = emptyList(),   // 可选模型（apis.list）
     val usage: AcpClient.UsageInfo? = null,                // 当前会话用量快照
     val yolo: Boolean = false,                             // 完全权限（免逐次审批）
-    val settingsNotice: String? = null                     // 模型/权限切换失败提示
+    val settingsNotice: String? = null,                    // 模型/权限切换失败提示
+    // —— 工作区（C 组）——
+    val workspaces: List<AcpClient.Workspace> = emptyList(),
+    val workspacesOpen: Boolean = false,
+    val activeCwd: String = "",
+    val workspaceNotice: String? = null
 )
 
 /**
@@ -84,10 +90,6 @@ data class ChatUiState(
 class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listener {
 
     companion object {
-        const val WS_URL =
-            "wss://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/__agh_ws"
-        const val AUTH_USER = "agh"
-        const val AUTH_PASS = "11ad3c6798ca7e19"
         private const val PREFS = "yuno_agh"
         private const val KEY_SESSION_ID = "last_session_id"
         private const val KEY_SESSION_CWD = "last_session_cwd"
@@ -107,10 +109,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     private var lastAgentKey: String? = null         // 本轮最近一条 agent 气泡（补耗时用）
     private var sendStartMs = 0L                     // 本轮 prompt 发出时刻
     private var everConnected = false                // 是否已成功连接过（区分首连与重连）
+    private var connConfigId: String? = null         // 当前连接用的配置 id（检测设置页变更）
+    private var selectedCwd: String? = null          // 用户选定的工作区（新会话 cwd）
 
     init {
         acp.setListener(this)
-        acp.connect(WS_URL, AUTH_USER, AUTH_PASS)
+        val p = AppConfig.activeProfile(app)
+        connConfigId = p.id
+        acp.connect(p.url, p.user, p.pass)
     }
 
     // ==================== 对外操作 ====================
@@ -190,8 +196,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         }
         acp.listSessions(null, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
+                val visible = sessions.filter { it.lastSeq > 0 }   // 过滤空会话（无消息）
                 _state.update {
-                    it.copy(sessions = sessions.toList(), sessionsLoading = false,
+                    it.copy(sessions = visible, sessionsLoading = false,
                         sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
                 }
             }
@@ -209,8 +216,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         _state.update { it.copy(sessionsLoadingMore = true) }
         acp.listSessions(s.sessionsCursor, object : AcpClient.SessionsCb {
             override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
+                val visible = sessions.filter { it.lastSeq > 0 }
                 _state.update {
-                    it.copy(sessions = it.sessions + sessions, sessionsLoadingMore = false,
+                    it.copy(sessions = it.sessions + visible, sessionsLoadingMore = false,
                         sessionsCursor = next ?: "", sessionsHasMore = !next.isNullOrEmpty())
                 }
             }
@@ -228,6 +236,79 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     }
 
     fun clearSessionsNotice() { _state.update { it.copy(sessionsNotice = null) } }
+
+    /** 删除会话：AGH 仅支持「归档」，故删除 = 归档并从列表移出；可在「显示已删除」中恢复。 */
+    fun deleteSession(s: AcpClient.SessionInfo) {
+        acp.archiveSession(s.sessionId, true, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update {
+                    it.copy(
+                        sessions = it.sessions.filter { x -> x.sessionId != s.sessionId },
+                        sessionsNotice = "已删除"
+                    )
+                }
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(sessionsNotice = msg ?: "删除失败") }
+            }
+        })
+    }
+
+    // ==================== 工作区（C 组）====================
+
+    fun openWorkspaces() {
+        _state.update { it.copy(workspacesOpen = true) }
+        refreshWorkspaces()
+    }
+
+    fun closeWorkspaces() { _state.update { it.copy(workspacesOpen = false) } }
+
+    fun refreshWorkspaces() {
+        acp.listWorkspaces(object : AcpClient.WorkspacesCb {
+            override fun onResult(workspaces: MutableList<AcpClient.Workspace>) {
+                _state.update { st ->
+                    st.copy(
+                        workspaces = workspaces.toList(),
+                        activeCwd = st.activeCwd.ifEmpty {
+                            selectedCwd ?: workspaces.firstOrNull()?.path ?: ""
+                        }
+                    )
+                }
+            }
+
+            override fun onError(msg: String?) {
+                _state.update { it.copy(workspaceNotice = msg ?: "工作区加载失败") }
+            }
+        })
+    }
+
+    fun selectWorkspace(w: AcpClient.Workspace) {
+        selectedCwd = w.path
+        acp.setPreferredCwd(w.path)
+        _state.update {
+            it.copy(activeCwd = w.path, workspacesOpen = false,
+                workspaceNotice = "已切到工作区：" + w.name)
+        }
+        newSession()   // 切到该目录开新会话，后续对话都落在它下面
+    }
+
+    fun clearWorkspaceNotice() { _state.update { it.copy(workspaceNotice = null) } }
+
+    /** 从设置页返回：若当前连接配置已变更，则断开重连。 */
+    fun reloadConfigIfChanged() {
+        val p = AppConfig.activeProfile(getApplication())
+        if (p.id == connConfigId) return
+        connConfigId = p.id
+        everConnected = false
+        _state.update {
+            it.copy(items = emptyList(), historyLoaded = false, currentSessionId = null,
+                sessionModel = null, usage = null, statusText = "正在连接…",
+                conn = ConnState.CONNECTING, inputEnabled = false)
+        }
+        acp.close()
+        acp.connect(p.url, p.user, p.pass)
+    }
 
     // ==================== 状态条：模型 / 用量 / 权限（B 组）====================
 
@@ -365,6 +446,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
             _state.update { st -> if (st.sessionModel == null) st.copy(sessionModel = m) else st }
         }
         refreshModels()   // 状态条的模型胶囊需要可选模型列表
+        refreshWorkspaces()   // 工作区列表（顶部目录栏）
         // 首次连接：优先恢复上次会话（相当于"主对话"），没有或已失效才新建
         val savedId = prefs.getString(KEY_SESSION_ID, null)
         val savedCwd = prefs.getString(KEY_SESSION_CWD, null)

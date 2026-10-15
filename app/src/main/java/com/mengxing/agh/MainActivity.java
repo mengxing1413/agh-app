@@ -33,11 +33,11 @@ import android.widget.TextView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends Activity {
-    private static final String START_URL =
-        "https://i-69df90b938a3bc3d5392c8bb-1.tail6125f3.ts.net:8443/";
-    private static final String AUTH_USER = "agh";
-    private static final String AUTH_PASS = "11ad3c6798ca7e19";
-    public static final String VERSION = "0.1.8";
+    // 连接信息在 onCreate 里从「设置 → 连接」的当前配置载入
+    private String START_URL = "";
+    private String AUTH_USER = "";
+    private String AUTH_PASS = "";
+    public static final String VERSION = "0.1.9";
 
     private WebView web;
     private SwipeRefreshLayout swipe;
@@ -293,6 +293,13 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences(SettingsActivity.PREFS, MODE_PRIVATE);
         prefTheme = prefs.getString(SettingsActivity.KEY_THEME, SettingsActivity.THEME_SYSTEM);
+
+        // 连接信息取自「设置 → 连接」中选定的配置
+        com.mengxing.agh.data.ServerProfile prof =
+            com.mengxing.agh.data.AppConfig.INSTANCE.activeProfile(this);
+        START_URL = prof.webUrl();
+        AUTH_USER = prof.getUser();
+        AUTH_PASS = prof.getPass();
 
         getWindow().setStatusBarColor(cBgTop());
         getWindow().setNavigationBarColor(cBgTop());

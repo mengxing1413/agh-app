@@ -81,6 +81,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mengxing.agh.ui.MarkdownText
 import com.mengxing.agh.ui.theme.YunoAppTheme
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /** YunoAgent 原生对话页（Compose 版）。 */
 class ChatActivity : ComponentActivity() {
@@ -117,16 +121,37 @@ fun ChatScreen(vm: ChatViewModel) {
         }
     }
 
+    // 工作区切换提示
+    LaunchedEffect(state.workspaceNotice) {
+        state.workspaceNotice?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+            vm.clearWorkspaceNotice()
+        }
+    }
+
+    // 从设置页返回时，若切换了连接配置则自动重连
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) vm.reloadConfigIfChanged()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            YunoTopBar(
-                state = state,
-                onNewSession = { vm.newSession() },
-                onSessions = { vm.openSessions() },
-                onWorkbench = { context.startActivity(Intent(context, MainActivity::class.java)) },
-                onSettings = { context.startActivity(Intent(context, SettingsActivity::class.java)) }
-            )
+            Column {
+                YunoTopBar(
+                    state = state,
+                    onNewSession = { vm.newSession() },
+                    onSessions = { vm.openSessions() },
+                    onWorkbench = { context.startActivity(Intent(context, MainActivity::class.java)) },
+                    onSettings = { context.startActivity(Intent(context, SettingsActivity::class.java)) }
+                )
+                WorkspaceBar(state.activeCwd) { vm.openWorkspaces() }
+            }
         },
         bottomBar = {
             Column {
@@ -171,6 +196,7 @@ fun ChatScreen(vm: ChatViewModel) {
             onLoadMore = { vm.loadMoreSessions() },
             onRename = { sid, title -> vm.renameSession(sid, title) },
             onArchive = { sid, archived -> vm.archiveSession(sid, archived) },
+            onDelete = { s -> vm.deleteSession(s) },
             onFork = { s -> vm.forkSession(s) },
             onClearNotice = { vm.clearSessionsNotice() }
         )
@@ -181,6 +207,15 @@ fun ChatScreen(vm: ChatViewModel) {
             state = state,
             onRefresh = { vm.refreshUsage() },
             onDismiss = { usageOpen = false }
+        )
+    }
+
+    if (state.workspacesOpen) {
+        WorkspaceSheet(
+            state = state,
+            onPick = { w -> vm.selectWorkspace(w) },
+            onRetry = { vm.refreshWorkspaces() },
+            onDismiss = { vm.closeWorkspaces() }
         )
     }
 }
@@ -854,6 +889,7 @@ private fun SessionSheet(
     onLoadMore: () -> Unit,
     onRename: (String, String) -> Unit,
     onArchive: (String, Boolean) -> Unit,
+    onDelete: (AcpClient.SessionInfo) -> Unit,
     onFork: (AcpClient.SessionInfo) -> Unit,
     onClearNotice: () -> Unit
 ) {
@@ -947,7 +983,7 @@ private fun SessionSheet(
                 Spacer(Modifier.width(4.dp))
                 TextButton(onClick = onToggleArchived) {
                     Text(
-                        if (state.sessionsShowArchived) "隐藏归档" else "显示归档",
+                        if (state.sessionsShowArchived) "隐藏已删除" else "显示已删除",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (state.sessionsShowArchived) cs.primary else cs.onSurfaceVariant
                     )
@@ -978,7 +1014,7 @@ private fun SessionSheet(
                 shown.isEmpty() -> Text(
                     when {
                         state.sessions.isNotEmpty() && state.sessionsQuery.isNotBlank() -> "没有匹配的会话"
-                        state.sessions.isNotEmpty() -> "没有非归档会话，可点「显示归档」查看"
+                        state.sessions.isNotEmpty() -> "没有会话，可点「显示已删除」查看"
                         else -> "暂无历史会话"
                     },
                     color = cs.onSurfaceVariant,
@@ -993,6 +1029,7 @@ private fun SessionSheet(
                             onPick = { onPick(s) },
                             onRename = { renameText = s.title; renaming = s },
                             onArchiveToggle = { onArchive(s.sessionId, !s.archived) },
+                            onDelete = { onDelete(s) },
                             onFork = { onFork(s) }
                         )
                     }
@@ -1053,6 +1090,7 @@ private fun SessionRow(
     onPick: () -> Unit,
     onRename: () -> Unit,
     onArchiveToggle: () -> Unit,
+    onDelete: () -> Unit,
     onFork: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
@@ -1085,7 +1123,7 @@ private fun SessionRow(
                     if (isCurrent) append("当前会话").append("  ·  ")
                     append(formatTime(s.createdAt))
                     if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条消息")
-                    if (s.archived) append("  ·  已归档")
+                    if (s.archived) append("  ·  已删除")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (isCurrent || s.archived) cs.primary else cs.onSurfaceVariant,
@@ -1100,10 +1138,14 @@ private fun SessionRow(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename() })
-                DropdownMenuItem(
-                    text = { Text(if (s.archived) "取消归档" else "归档") },
-                    onClick = { menu = false; onArchiveToggle() }
-                )
+                if (s.archived) {
+                    DropdownMenuItem(text = { Text("恢复") }, onClick = { menu = false; onArchiveToggle() })
+                } else {
+                    DropdownMenuItem(
+                        text = { Text("删除", color = cs.error) },
+                        onClick = { menu = false; onDelete() }
+                    )
+                }
                 DropdownMenuItem(text = { Text("分叉到新会话") }, onClick = { menu = false; onFork() })
             }
         }

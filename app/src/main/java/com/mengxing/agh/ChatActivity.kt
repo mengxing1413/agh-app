@@ -1122,7 +1122,7 @@ private fun SessionRow(
                 buildString {
                     if (isCurrent) append("当前会话").append("  ·  ")
                     append(formatTime(s.createdAt))
-                    if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条消息")
+                    if (s.lastSeq > 0) append("  ·  ").append(s.lastSeq).append(" 条记录")
                     if (s.archived) append("  ·  已删除")
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -1192,17 +1192,26 @@ private fun optionLabel(o: AcpClient.PermOption): String {
     }
 }
 
+/**
+ * 时间显示：AGH 返回的 createdAt 是 ISO 8601 的 **UTC**（如 2026-10-15T13:43:47.593Z），
+ * 必须先按 UTC 解析再转成手机本地时区输出，否则会显示成 8 小时前。
+ */
 private fun formatTime(iso: String): String {
     if (iso.isEmpty()) return ""
     return try {
         if (iso.matches(Regex("\\d+"))) {
-            val ms = iso.toLong()
             java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
-                .format(java.util.Date(ms))
+                .format(java.util.Date(iso.toLong()))
         } else {
-            var s = iso.replace("T", " ").replace("Z", "")
-            if (s.length >= 16) s = s.substring(0, 16)
-            s
+            // ISO 8601（可带毫秒/时区后缀）→ 本地时区
+            val norm = iso.replace("Z", "+0000").replace(Regex("(\\.\\d{3})\\d*"), "$1")
+            val parse = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US)
+                .parse(norm)
+                ?: java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.US)
+                    .parse(norm.replace(Regex("\\.\\d{3}\\+"), "+"))
+                ?: return iso
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                .format(parse)
         }
     } catch (e: Exception) {
         iso

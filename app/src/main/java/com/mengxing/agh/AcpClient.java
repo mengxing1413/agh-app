@@ -500,6 +500,34 @@ public class AcpClient {
     /** 不带 cursor 的首屏拉取。 */
     public void listSessions(SessionsCb cb) { listSessions(null, cb); }
 
+    // ==================== AGH 配置（config.*）====================
+    // 注意：密钥只提交不返回（服务端永不回传 apiKey），所以列表里看不到明文。
+
+    /** 读当前配置快照（_agnes/v1/config.get → ConfigSnapshot）。 */
+    public void configGet(RespCb cb) {
+        request("_agnes/v1/config.get", new JSONObject(), cb);
+    }
+
+    /** 可用 Provider 列表（_agnes/v1/config.providers → {providers:[...]}）。 */
+    public void configProviders(RespCb cb) {
+        request("_agnes/v1/config.providers", new JSONObject(), cb);
+    }
+
+    /**
+     * 保存模型配置（_agnes/v1/config.save）。
+     * input 支持：providerId*、baseUrl、apiKey、model*、label、enabled、makeDefault、
+     * accountId、expectedRevision、defaultSettings{thinking, contextWindow}。
+     * 其中 defaultSettings.contextWindow 正是模型规格库要写进去的地方。
+     */
+    public void configSave(JSONObject input, RespCb cb) {
+        request("_agnes/v1/config.save", input, cb);
+    }
+
+    /** 测试连通（_agnes/v1/config.test）：providerId*、baseUrl、apiKey、model、accountId。 */
+    public void configTest(JSONObject input, RespCb cb) {
+        request("_agnes/v1/config.test", input, cb);
+    }
+
     /** AGH 工作区条目（_agnes/v1/workspace.list 的 items）。 */
     public static class Workspace {
         public final String path, name;

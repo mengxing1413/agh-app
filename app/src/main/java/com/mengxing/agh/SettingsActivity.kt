@@ -43,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.mengxing.agh.data.AppConfig
+import com.mengxing.agh.data.ModelCatalog
 import com.mengxing.agh.data.ServerProfile
 import com.mengxing.agh.ui.theme.YunoAppTheme
 import org.json.JSONObject
@@ -122,11 +124,14 @@ private fun SettingsApp(onClose: () -> Unit) {
             }
         )
 
+        "models" -> ModelsScreen(ctx = ctx, onBack = { screen = "main" })
+
         else -> MainSettings(
             ctx = ctx,
             active = AppConfig.activeProfile(ctx),
             onClose = onClose,
-            onManageConnections = { screen = "connections" }
+            onManageConnections = { screen = "connections" },
+            onManageModels = { screen = "models" }
         )
     }
 }
@@ -138,7 +143,8 @@ private fun MainSettings(
     ctx: Context,
     active: ServerProfile,
     onClose: () -> Unit,
-    onManageConnections: () -> Unit
+    onManageConnections: () -> Unit,
+    onManageModels: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     var theme by remember { mutableStateOf(AppConfig.theme(ctx)) }
@@ -195,6 +201,32 @@ private fun MainSettings(
             }
         }
 
+        GroupTitle("模型")
+        Surface(
+            color = cs.surface, shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, cs.outline),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .clickable { onManageModels() }
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(cs.secondaryContainer),
+                    contentAlignment = Alignment.Center) {
+                    Text("✦", color = cs.onSecondaryContainer,
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("模型配置",
+                        style = MaterialTheme.typography.bodyLarge, color = cs.onSurface,
+                        fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text("添加 / 切换模型，自动匹配上下文窗口",
+                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+                Text("管理 ›", style = MaterialTheme.typography.labelMedium, color = cs.primary)
+            }
+        }
+
         GroupTitle("配色")
         OptionRow("跟随系统", "随手机深色模式自动切换（推荐）", theme == "system") {
             theme = "system"; AppConfig.setString(ctx, AppConfig.KEY_THEME, theme); recreate()
@@ -202,7 +234,7 @@ private fun MainSettings(
         OptionRow("浅色", "固定浅色，不随系统变化", theme == "light") {
             theme = "light"; AppConfig.setString(ctx, AppConfig.KEY_THEME, theme); recreate()
         }
-        OptionRow("品牌深绿", "固定深绿，不随系统变化", theme == "dark") {
+        OptionRow("深色", "固定深色，不随系统变化", theme == "dark") {
             theme = "dark"; AppConfig.setString(ctx, AppConfig.KEY_THEME, theme); recreate()
         }
 
@@ -625,4 +657,255 @@ private fun testConnection(p: ServerProfile, cb: (Boolean, String) -> Unit) {
     })
     client.connect(p.url, p.user, p.pass)
     handler.postDelayed({ finish(false, "连接超时（请检查地址/网络）") }, 8000)
+}
+
+// ==================== 模型配置（D5 + D6）====================
+// D5：通过 config.get / config.save / config.test 管理 AGH 的模型配置
+// D6：加模型时用内置规格库自动填上下文窗口，避免"每个模型都标 200K"
+
+@Composable
+private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val profile = remember { AppConfig.activeProfile(ctx) }
+    val client = remember { AcpClient() }
+
+    var connected by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("正在连接 AGH…") }
+    var busy by remember { mutableStateOf(false) }
+
+    var providerId by remember { mutableStateOf("") }
+    var baseUrl by remember { mutableStateOf("") }
+    var curModel by remember { mutableStateOf("") }
+    var curCtx by remember { mutableStateOf("") }
+
+    var modelId by remember { mutableStateOf("") }
+    var ctxWindow by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+    var specNote by remember { mutableStateOf("输入模型 id，自动匹配上下文窗口") }
+
+    // 读取当前配置
+    fun loadConfig() {
+        client.configGet(object : AcpClient.RespCb {
+            override fun onResult(result: JSONObject) {
+                val p = result.optJSONObject("provider")
+                if (p != null) {
+                    providerId = p.optString("id", providerId)
+                    baseUrl = p.optString("baseUrl", baseUrl)
+                    curModel = p.optString("model", curModel)
+                }
+                // 上下文窗口：从 accounts[].models[] 里找当前模型
+                var win = ""
+                val accounts = result.optJSONArray("accounts")
+                if (accounts != null) {
+                    outer@ for (i in 0 until accounts.length()) {
+                        val a = accounts.optJSONObject(i) ?: continue
+                        val ms = a.optJSONArray("models") ?: continue
+                        for (j in 0 until ms.length()) {
+                            val m = ms.optJSONObject(j) ?: continue
+                            if (m.optString("id", "") == curModel) {
+                                win = m.optInt("contextWindow", 0).toString()
+                                break@outer
+                            }
+                        }
+                    }
+                }
+                curCtx = win
+                if (modelId.isEmpty() && curModel.isNotEmpty()) {
+                    modelId = curModel
+                    if (ctxWindow.isEmpty()) ctxWindow = win
+                }
+                status = if (p == null) "尚未配置模型，请在下方添加" else "已读取配置"
+            }
+
+            override fun onError(msg: String?) { status = "读取配置失败：" + (msg ?: "") }
+        })
+    }
+
+    // 加规格库自动填
+    fun applySpec(id: String) {
+        val spec = ModelCatalog.find(ctx, id)
+        if (spec != null) {
+            ctxWindow = spec.ctxWindow.toString()
+            specNote = "✓ 已匹配规格库：${spec.name} · ${spec.ctxWindow / 1000}K" +
+                (if (spec.note.isNotEmpty()) " · ${spec.note}" else "")
+        } else {
+            specNote = "规格库未收录该型号，请手动填上下文窗口（或联系补录）"
+        }
+    }
+
+    fun save(makeDefault: Boolean) {
+        if (modelId.trim().isEmpty()) { status = "请先填模型 id"; return }
+        busy = true
+        status = "正在保存…"
+        val win = ctxWindow.trim().toIntOrNull() ?: 0
+        val input = JSONObject().apply {
+            put("providerId", providerId.ifEmpty { "agnes-ai" })
+            if (baseUrl.trim().isNotEmpty()) put("baseUrl", baseUrl.trim())
+            if (apiKey.trim().isNotEmpty()) put("apiKey", apiKey.trim())
+            put("model", modelId.trim())
+            put("label", modelId.trim())
+            put("enabled", true)
+            put("makeDefault", makeDefault)
+            // D6：把规格库给的上下文窗口一起写进去
+            if (win > 0) put("defaultSettings", JSONObject().put("contextWindow", win))
+        }
+        client.configSave(input, object : AcpClient.RespCb {
+            override fun onResult(result: JSONObject) {
+                busy = false
+                // 记入本地规格库，下次自动识别
+                if (win > 0) ModelCatalog.remember(ctx,
+                    com.mengxing.agh.data.ModelSpec(modelId.trim(), modelId.trim(), win, 0.0, 0.0, false, "自填"))
+                apiKey = ""          // 密钥不回显，用完即清
+                status = if (makeDefault) "已保存并设为默认模型 ✓" else "已保存 ✓"
+                loadConfig()
+            }
+
+            override fun onError(msg: String?) {
+                busy = false
+                status = "保存失败：" + (msg ?: "")
+            }
+        })
+    }
+
+    fun testModel() {
+        busy = true
+        status = "正在测试连通…"
+        val input = JSONObject().apply {
+            put("providerId", providerId.ifEmpty { "agnes-ai" })
+            if (baseUrl.trim().isNotEmpty()) put("baseUrl", baseUrl.trim())
+            if (apiKey.trim().isNotEmpty()) put("apiKey", apiKey.trim())
+            if (modelId.trim().isNotEmpty()) put("model", modelId.trim())
+        }
+        client.configTest(input, object : AcpClient.RespCb {
+            override fun onResult(result: JSONObject) {
+                busy = false
+                status = "✓ 测试通过"
+            }
+
+            override fun onError(msg: String?) {
+                busy = false
+                status = "✗ 测试失败：" + (msg ?: "")
+            }
+        })
+    }
+
+    DisposableEffect(Unit) {
+        client.setListener(object : AcpClient.Listener {
+            override fun onConnected() {
+                connected = true
+                status = "已连接"
+                loadConfig()
+            }
+            override fun onError(msg: String?) { status = "连接失败：" + (msg ?: "") }
+            override fun onClosed() { connected = false }
+            override fun onReconnecting(msg: String?) { status = "正在重连…" }
+            override fun onMessageChunk(text: String?) {}
+            override fun onAgentMessage(text: String?) {}
+            override fun onToolCall(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
+            override fun onToolCallUpdate(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
+            override fun onPermissionRequest(reqId: Any?, title: String?, options: MutableList<AcpClient.PermOption>?) {}
+            override fun onUserMessage(text: String?) {}
+            override fun onSessionLoaded(sid: String?) {}
+            override fun onPromptDone(stopReason: String?) {}
+        })
+        client.connect(profile.url, profile.user, profile.pass)
+        onDispose { try { client.close() } catch (_: Exception) {} }
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 32.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, "返回", tint = cs.onSurfaceVariant)
+            }
+            Text("模型配置", style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold, color = cs.onBackground)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(status, style = MaterialTheme.typography.bodySmall,
+            color = if (status.startsWith("✗") || status.contains("失败")) cs.error else cs.onSurfaceVariant)
+
+        Spacer(Modifier.height(16.dp))
+        GroupTitle("当前模型")
+        Surface(
+            color = cs.surface, shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, cs.outline),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(if (curModel.isEmpty()) "（未配置）" else curModel,
+                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                    color = cs.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text("Provider：" + providerId.ifEmpty { "-" } + "  ·  上下文：" +
+                    (if (curCtx.isEmpty()) "未知" else curCtx + " tokens"),
+                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                if (baseUrl.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(baseUrl, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        GroupTitle("添加 / 切换模型")
+
+        OutlinedTextField(
+            value = modelId, onValueChange = { modelId = it; applySpec(it) },
+            label = { Text("模型 id（如 agnes-3.0-flash）") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(specNote, style = MaterialTheme.typography.bodySmall,
+            color = if (specNote.startsWith("✓")) cs.primary else cs.onSurfaceVariant)
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = ctxWindow, onValueChange = { ctxWindow = it },
+            label = { Text("上下文窗口（token）") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = apiKey, onValueChange = { apiKey = it },
+            label = { Text("API Key（留空则沿用现有的）") },
+            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = baseUrl, onValueChange = { baseUrl = it },
+            label = { Text("接口地址（留空则沿用现有的）") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = { testModel() }, enabled = connected && !busy,
+                modifier = Modifier.weight(1f)) {
+                Text(if (busy) "…" else "测试连通")
+            }
+            Button(onClick = { save(true) }, enabled = connected && !busy,
+                modifier = Modifier.weight(1f)) {
+                Text("保存并设为默认")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { save(false) }, enabled = connected && !busy,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("仅保存（不切换默认）")
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text("说明：上下文窗口由内置规格库自动填写，可手动修改；保存后会写入 AGH 配置，状态条的「已用 / 窗口」即按此计算。",
+            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+    }
 }

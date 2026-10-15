@@ -447,7 +447,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         }
         refreshModels()   // 状态条的模型胶囊需要可选模型列表
         refreshWorkspaces()   // 工作区列表（顶部目录栏）
-        // 首次连接：优先恢复上次会话（相当于"主对话"），没有或已失效才新建
+        // 会话锁定（用户规则）：永远接上「最后对话的会话」，绝不自动开新会话；
+        // 手动新建只走 ➕ 按钮。仅当服务端一个会话都没有时才新建。
         val savedId = prefs.getString(KEY_SESSION_ID, null)
         val savedCwd = prefs.getString(KEY_SESSION_CWD, null)
         if (!savedId.isNullOrEmpty()) {
@@ -460,14 +461,49 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
                 }
 
                 override fun onError(msg: String?) {
-                    // 上次会话已被删除/归档 → 静默回退到新建
-                    _state.update { it.copy(statusText = "上次会话已失效，正在新建…") }
-                    startNewSession()
+                    // 上次会话已删除/失效 → 退到服务端最近的会话，绝不凭空新建
+                    _state.update { it.copy(statusText = "上次会话已失效，接上最近的会话…") }
+                    restoreLatestSession()
                 }
             }, true)
         } else {
-            startNewSession()
+            restoreLatestSession()
         }
+    }
+
+    /**
+     * 退化兜底：接上服务端「最近的会话」继续用；只有完全没有会话时才新建一个。
+     * 这保证了"打开就是上次那个对话"，不会自己凭空开新对话。
+     */
+    private fun restoreLatestSession() {
+        acp.listSessions(null, object : AcpClient.SessionsCb {
+            override fun onResult(sessions: MutableList<AcpClient.SessionInfo>, next: String?) {
+                // 未删除、且有过实际内容的会话里，取最近活跃的那个（服务端按最近优先返回）
+                val target = sessions.firstOrNull { !it.archived && it.lastSeq > 0 }
+                if (target == null) {
+                    // 全新环境：一个会话都没有 → 这才是新建的唯一时机
+                    startNewSession()
+                    return
+                }
+                historyMode = true
+                _state.update { it.copy(statusText = "正在打开上次会话…") }
+                acp.loadSession(target.sessionId, target.cwd ?: "", object : AcpClient.RespCb {
+                    override fun onResult(result: org.json.JSONObject) {
+                        persistSession()
+                        _state.update { st -> st.copy(sessionModel = acp.getModelName() ?: st.sessionModel) }
+                    }
+
+                    override fun onError(msg: String?) {
+                        _state.update { it.copy(statusText = "会话打开失败：" + (msg ?: "")) }
+                    }
+                }, true)
+            }
+
+            override fun onError(msg: String?) {
+                // 连列表都拿不到 → 退回本地记录，仍然失败就只能新建
+                startNewSession()
+            }
+        })
     }
 
     /** 新建会话（启动兜底与用户点 ➕ 共用）：先建好拿到新 id 再清屏。 */

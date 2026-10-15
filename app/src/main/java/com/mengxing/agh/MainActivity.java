@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
     private String START_URL = "";
     private String AUTH_USER = "";
     private String AUTH_PASS = "";
-    public static final String VERSION = "0.1.9";
+    public static final String VERSION = "0.2.0";
 
     private WebView web;
     private SwipeRefreshLayout swipe;

@@ -32,7 +32,16 @@ private class Skin(
     val darkOnContainer: Color,
     val darkSecondary: Color,
     val darkSecContainer: Color,
-    val darkOnSecContainer: Color
+    val darkOnSecContainer: Color,
+    // 底色（背景/卡片/分隔线）：必须随皮肤走，否则会出现"选海洋蓝还是绿底"的错版感
+    val lightBg: Color,
+    val lightSurface: Color,
+    val lightSurfaceVariant: Color,
+    val lightOutline: Color,
+    val darkBg: Color,
+    val darkSurface: Color,
+    val darkSurfaceVariant: Color,
+    val darkOutline: Color
 )
 
 private val SKINS = mapOf(
@@ -40,31 +49,41 @@ private val SKINS = mapOf(
         Color(0xFF2F7D5B), Color.White, Color(0xFFDCEBDA), Color(0xFF12301F),
         Color(0xFF7C9F69), Color(0xFFE4EEDD), Color(0xFF1C331F),
         Color(0xFF7C9F69), Color(0xFF07271C), Color(0xFF1E3A2C), Color(0xFFD9EBD9),
-        Color(0xFF7C9F69), Color(0xFF20342A), Color(0xFFD3E5D5)
+        Color(0xFF7C9F69), Color(0xFF20342A), Color(0xFFD3E5D5),
+        Color(0xFFF4F8F3), Color(0xFFFFFFFF), Color(0xFFE9F0E7), Color(0xFFDCE5DA),
+        Color(0xFF0B1410), Color(0xFF14231C), Color(0xFF1C2E25), Color(0xFF2A3D33)
     ),
     "blue" to Skin(
         Color(0xFF2563A8), Color.White, Color(0xFFD9E6F5), Color(0xFF0E2138),
         Color(0xFF4A82C4), Color(0xFFE1EBF7), Color(0xFF122A45),
         Color(0xFF6AA6E0), Color(0xFF04182E), Color(0xFF1B2F47), Color(0xFFD3E3F5),
-        Color(0xFF6AA6E0), Color(0xFF1D334E), Color(0xFFD3E3F5)
+        Color(0xFF6AA6E0), Color(0xFF1D334E), Color(0xFFD3E3F5),
+        Color(0xFFF3F7FB), Color(0xFFFFFFFF), Color(0xFFE8F0F8), Color(0xFFD9E5F1),
+        Color(0xFF0A1119), Color(0xFF13212E), Color(0xFF1A2B3B), Color(0xFF28394B)
     ),
     "orange" to Skin(
         Color(0xFFC2691E), Color.White, Color(0xFFF8E4D2), Color(0xFF3A1E08),
         Color(0xFFE08A3C), Color(0xFFFAEADB), Color(0xFF432612),
         Color(0xFFE8974C), Color(0xFF2A1503), Color(0xFF40270F), Color(0xFFF8E4D2),
-        Color(0xFFE8974C), Color(0xFF432612), Color(0xFFF8E4D2)
+        Color(0xFFE8974C), Color(0xFF432612), Color(0xFFF8E4D2),
+        Color(0xFFFBF6F0), Color(0xFFFFFFFF), Color(0xFFF6EDE3), Color(0xFFEBE0D3),
+        Color(0xFF14100B), Color(0xFF221A11), Color(0xFF2D2217), Color(0xFF3E2F21)
     ),
     "violet" to Skin(
         Color(0xFF6D4BA8), Color.White, Color(0xFFE6DDF5), Color(0xFF241441),
         Color(0xFF8E6BC8), Color(0xFFEDE6F9), Color(0xFF2C1B4E),
         Color(0xFFA98BDD), Color(0xFF1A0E30), Color(0xFF2C1F4A), Color(0xFFE6DDF5),
-        Color(0xFFA98BDD), Color(0xFF31234F), Color(0xFFE6DDF5)
+        Color(0xFFA98BDD), Color(0xFF31234F), Color(0xFFE6DDF5),
+        Color(0xFFF8F6FB), Color(0xFFFFFFFF), Color(0xFFEFEAF7), Color(0xFFE3DCEF),
+        Color(0xFF100C18), Color(0xFF1C1626), Color(0xFF262034), Color(0xFF362B48)
     ),
     "slate" to Skin(
         Color(0xFF4B5563), Color.White, Color(0xFFE4E7EB), Color(0xFF1A1F26),
         Color(0xFF6B7280), Color(0xFFECEEF1), Color(0xFF20252C),
         Color(0xFF9AA4B2), Color(0xFF14181E), Color(0xFF262C34), Color(0xFFE4E7EB),
-        Color(0xFF9AA4B2), Color(0xFF2A3038), Color(0xFFE4E7EB)
+        Color(0xFF9AA4B2), Color(0xFF2A3038), Color(0xFFE4E7EB),
+        Color(0xFFF5F6F8), Color(0xFFFFFFFF), Color(0xFFEBEDF1), Color(0xFFDDE1E7),
+        Color(0xFF101216), Color(0xFF1A1D22), Color(0xFF23272E), Color(0xFF323840)
     )
 )
 
@@ -77,14 +96,15 @@ private fun lightScheme(skin: Skin) = lightColorScheme(
     onSecondary = Color.White,
     secondaryContainer = skin.lightSecContainer,
     onSecondaryContainer = skin.lightOnSecContainer,
-    background = Color(0xFFF6F7F9),
+    // 底色随皮肤走（豆沙绿→绿灰底、海洋蓝→蓝灰底…），不再写死
+    background = skin.lightBg,
     onBackground = Color(0xFF111827),
-    surface = Color(0xFFFFFFFF),
+    surface = skin.lightSurface,
     onSurface = Color(0xFF111827),
-    surfaceVariant = Color(0xFFEDF1EE),
+    surfaceVariant = skin.lightSurfaceVariant,
     onSurfaceVariant = Color(0xFF6B7280),
-    outline = Color(0xFFE2E6EA),
-    outlineVariant = Color(0xFFEDF0F2),
+    outline = skin.lightOutline,
+    outlineVariant = skin.lightSurfaceVariant,
     error = Color(0xFFC0392B),
     onError = Color.White
 )
@@ -98,14 +118,15 @@ private fun darkScheme(skin: Skin) = darkColorScheme(
     onSecondary = skin.darkOnPrimary,
     secondaryContainer = skin.darkSecContainer,
     onSecondaryContainer = skin.darkOnSecContainer,
-    background = Color(0xFF0B1410),
+    // 深色底色也随皮肤走（之前写死深绿，导致"海洋蓝却是绿底"）
+    background = skin.darkBg,
     onBackground = Color(0xFFF2F7F4),
-    surface = Color(0xFF14231C),
+    surface = skin.darkSurface,
     onSurface = Color(0xFFF2F7F4),
-    surfaceVariant = Color(0xFF1C2E25),
+    surfaceVariant = skin.darkSurfaceVariant,
     onSurfaceVariant = Color(0xFF9FB3A8),
-    outline = Color(0xFF2A3D33),
-    outlineVariant = Color(0xFF22322A),
+    outline = skin.darkOutline,
+    outlineVariant = skin.darkSurfaceVariant,
     error = Color(0xFFE06A6A),
     onError = Color(0xFF3A0A0A)
 )

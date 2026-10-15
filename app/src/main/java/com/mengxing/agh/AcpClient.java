@@ -63,6 +63,49 @@ public class AcpClient {
         void onError(String msg);
     }
 
+    /** 可选模型（来自 _agnes/v1/apis.list 的 profile.models）。 */
+    public static class ModelInfo {
+        public final String id, route;
+        public final int contextWindow;
+        public ModelInfo(String id, String route, int contextWindow) {
+            this.id = id; this.route = route; this.contextWindow = contextWindow;
+        }
+    }
+
+    /** 模型列表回调。 */
+    public interface ModelsCb {
+        void onResult(List<ModelInfo> models);
+        void onError(String msg);
+    }
+
+    /**
+     * 会话用量快照（来自 _agnes/v1/session.projectUIOpening 的 result.timeline.usage / .yolo）。
+     * ctxTokens/ctxWindow 为「当前上下文占用 / 模型窗口」，totals 为整段会话累计。
+     */
+    public static class UsageInfo {
+        public final int ctxTokens, ctxWindow;
+        public final boolean autoCompact;
+        public final int input, output, cacheRead, cacheWrite, reasoning;
+        public final long costUsdMicros;
+        public final String modelId;
+        public final boolean yolo;
+
+        public UsageInfo(int ctxTokens, int ctxWindow, boolean autoCompact,
+                         int input, int output, int cacheRead, int cacheWrite, int reasoning,
+                         long costUsdMicros, String modelId, boolean yolo) {
+            this.ctxTokens = ctxTokens; this.ctxWindow = ctxWindow; this.autoCompact = autoCompact;
+            this.input = input; this.output = output;
+            this.cacheRead = cacheRead; this.cacheWrite = cacheWrite; this.reasoning = reasoning;
+            this.costUsdMicros = costUsdMicros; this.modelId = modelId; this.yolo = yolo;
+        }
+    }
+
+    /** 用量回调。 */
+    public interface UsageCb {
+        void onResult(UsageInfo u);
+        void onError(String msg);
+    }
+
     public interface Listener {
         void onConnected();
         void onMessageChunk(String text);
@@ -443,6 +486,112 @@ public class AcpClient {
 
     /** 不带 cursor 的首屏拉取。 */
     public void listSessions(SessionsCb cb) { listSessions(null, cb); }
+
+    // —— 模型 / 权限 / 用量（B 组）——
+
+    /** 拉取可选模型列表（profile.models：id / route / contextWindow）。 */
+    public void fetchModels(ModelsCb cb) {
+        request("_agnes/v1/apis.list", new JSONObject(), new RespCb() {
+            public void onResult(JSONObject result) {
+                List<ModelInfo> list = new ArrayList<>();
+                JSONObject profile = result.optJSONObject("profile");
+                JSONArray arr = profile != null ? profile.optJSONArray("models") : null;
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject o = arr.optJSONObject(i);
+                        if (o == null) continue;
+                        String id = o.optString("id", "");
+                        if (id.isEmpty()) continue;
+                        int cw = o.optInt("contextWindow", 0);
+                        if (cw <= 0) {
+                            JSONObject ds = o.optJSONObject("defaultSettings");
+                            if (ds != null) cw = ds.optInt("contextWindow", 0);
+                        }
+                        list.add(new ModelInfo(id, o.optString("route", ""), cw));
+                    }
+                }
+                if (cb != null) cb.onResult(list);
+            }
+            public void onError(String msg) { if (cb != null) cb.onError(msg); }
+        });
+    }
+
+    /**
+     * 切换当前会话主模型（_agnes/v1/session.setModel）。
+     * 实测 slot 固定传 "primary"；thinking/contextWindow 传 null 表示用模型默认。
+     * result: EffectiveFromResult { effectiveFromSeq }。
+     */
+    public void setModel(String route, String model, RespCb cb) {
+        if (sessionId == null) { if (cb != null) cb.onError("会话未就绪"); return; }
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sessionId);
+            p.put("slot", "primary");
+            p.put("route", route);
+            p.put("model", model);
+            p.put("thinking", JSONObject.NULL);
+            p.put("contextWindow", JSONObject.NULL);
+            request("_agnes/v1/session.setModel", p, new RespCb() {
+                public void onResult(JSONObject result) {
+                    modelName = model;   // 同步本地缓存，气泡 meta 立即显示新模型
+                    if (cb != null) cb.onResult(result);
+                }
+                public void onError(String msg) { if (cb != null) cb.onError(msg); }
+            });
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /** 切换会话「完全权限」（_agnes/v1/session.setYolo；enabled=true 即免逐次审批）。 */
+    public void setYolo(boolean enabled, RespCb cb) {
+        if (sessionId == null) { if (cb != null) cb.onError("会话未就绪"); return; }
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sessionId);
+            p.put("enabled", enabled);
+            request("_agnes/v1/session.setYolo", p, cb);
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    /** 读取当前会话用量（projectUIOpening → timeline.usage / timeline.yolo）。 */
+    public void fetchUsage(UsageCb cb) {
+        if (sessionId == null) { if (cb != null) cb.onError("会话未就绪"); return; }
+        try {
+            JSONObject p = new JSONObject();
+            p.put("sessionId", sessionId);
+            request("_agnes/v1/session.projectUIOpening", p, new RespCb() {
+                public void onResult(JSONObject result) {
+                    UsageInfo u = parseUsage(result);
+                    if (cb == null) return;
+                    if (u != null) cb.onResult(u); else cb.onError("暂无用量数据");
+                }
+                public void onError(String msg) { if (cb != null) cb.onError(msg); }
+            });
+        } catch (Exception e) { if (cb != null) cb.onError(e.getMessage()); }
+    }
+
+    private UsageInfo parseUsage(JSONObject result) {
+        if (result == null) return null;
+        JSONObject tl = result.optJSONObject("timeline");
+        if (tl == null) return null;
+        JSONObject usage = tl.optJSONObject("usage");
+        if (usage == null) return null;
+        JSONObject totals = usage.optJSONObject("totals");
+        JSONObject ctx = usage.optJSONObject("context");
+        JSONObject model = usage.optJSONObject("model");
+        JSONObject cost = usage.optJSONObject("cost");
+        int in = totals != null ? totals.optInt("input", 0) : 0;
+        int out = totals != null ? totals.optInt("output", 0) : 0;
+        int cr = totals != null ? totals.optInt("cacheRead", 0) : 0;
+        int cw = totals != null ? totals.optInt("cacheWrite", 0) : 0;
+        int rs = totals != null ? totals.optInt("reasoning", 0) : 0;
+        int ctxTokens = ctx != null ? ctx.optInt("tokens", 0) : 0;
+        int ctxWindow = ctx != null ? ctx.optInt("window", 0) : 0;
+        boolean auto = ctx != null && ctx.optBoolean("autoCompact", false);
+        long usd = cost != null ? cost.optLong("usdMicros", 0) : 0;
+        String mid = model != null ? model.optString("id", null) : null;
+        boolean yolo = tl.optBoolean("yolo", false);
+        return new UsageInfo(ctxTokens, ctxWindow, auto, in, out, cr, cw, rs, usd, mid, yolo);
+    }
 
     /** 重命名会话（_agnes/v1/session.rename；title 长度 1~256）。 */
     public void renameSession(String sid, String title, RespCb cb) {

@@ -67,7 +67,12 @@ data class ChatUiState(
     val sessionsLoadingMore: Boolean = false,
     val sessionsQuery: String = "",           // 本地搜索词（服务端 q 实测不工作）
     val sessionsShowArchived: Boolean = false, // 是否显示已归档
-    val sessionsNotice: String? = null        // 操作结果提示
+    val sessionsNotice: String? = null,       // 操作结果提示
+    // —— 状态条（B 组）：模型 / 用量 / 权限 ——
+    val models: List<AcpClient.ModelInfo> = emptyList(),   // 可选模型（apis.list）
+    val usage: AcpClient.UsageInfo? = null,                // 当前会话用量快照
+    val yolo: Boolean = false,                             // 完全权限（免逐次审批）
+    val settingsNotice: String? = null                     // 模型/权限切换失败提示
 )
 
 /**
@@ -224,6 +229,59 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
 
     fun clearSessionsNotice() { _state.update { it.copy(sessionsNotice = null) } }
 
+    // ==================== 状态条：模型 / 用量 / 权限（B 组）====================
+
+    /** 拉取可选模型列表（静默失败，不打扰对话）。 */
+    fun refreshModels() {
+        acp.fetchModels(object : AcpClient.ModelsCb {
+            override fun onResult(models: MutableList<AcpClient.ModelInfo>) {
+                _state.update { it.copy(models = models.toList()) }
+            }
+            override fun onError(msg: String?) { /* 静默 */ }
+        })
+    }
+
+    /** 刷新当前会话用量 + 完全权限状态（静默失败）。 */
+    fun refreshUsage() {
+        acp.fetchUsage(object : AcpClient.UsageCb {
+            override fun onResult(u: AcpClient.UsageInfo) {
+                _state.update {
+                    it.copy(usage = u, yolo = u.yolo,
+                        sessionModel = if (!u.modelId.isNullOrEmpty()) u.modelId else it.sessionModel)
+                }
+            }
+            override fun onError(msg: String?) { /* 静默 */ }
+        })
+    }
+
+    /** 切换会话主模型（成功后刷新用量里回显的模型名）。 */
+    fun selectModel(m: AcpClient.ModelInfo) {
+        acp.setModel(m.route, m.id, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update { it.copy(sessionModel = m.id, settingsNotice = "已切换模型：" + m.id) }
+                refreshUsage()
+            }
+            override fun onError(msg: String?) {
+                _state.update { it.copy(settingsNotice = "切换模型失败：" + (msg ?: "")) }
+            }
+        })
+    }
+
+    /** 切换「完全权限」开关。 */
+    fun setYolo(enabled: Boolean) {
+        acp.setYolo(enabled, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                _state.update { it.copy(yolo = enabled) }
+                refreshUsage()
+            }
+            override fun onError(msg: String?) {
+                _state.update { it.copy(settingsNotice = "权限切换失败：" + (msg ?: "")) }
+            }
+        })
+    }
+
+    fun clearSettingsNotice() { _state.update { it.copy(settingsNotice = null) } }
+
     /** 重命名会话（成功后刷新列表）。 */
     fun renameSession(sid: String, title: String) {
         val t = title.trim().take(256)   // 服务端 session/rename 上限 256
@@ -306,6 +364,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         acp.fetchProfileDefaultModel { m ->
             _state.update { st -> if (st.sessionModel == null) st.copy(sessionModel = m) else st }
         }
+        refreshModels()   // 状态条的模型胶囊需要可选模型列表
         // 首次连接：优先恢复上次会话（相当于"主对话"），没有或已失效才新建
         val savedId = prefs.getString(KEY_SESSION_ID, null)
         val savedCwd = prefs.getString(KEY_SESSION_CWD, null)
@@ -339,6 +398,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
                         statusText = "新会话", inputEnabled = true,
                         currentSessionId = acp.getSessionId())
                 }
+                refreshUsage()
             }
 
             override fun onError(msg: String?) {
@@ -424,6 +484,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
                 currentSessionId = sessionId,
                 sessionModel = acp.getModelName() ?: it.sessionModel)
         }
+        refreshUsage()
     }
 
     override fun onToolCall(
@@ -469,6 +530,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         }
         streamingAgentKey = null
         sendStartMs = 0L
+        refreshUsage()   // 每轮结束后刷新上下文用量
     }
 
     override fun onError(msg: String) {

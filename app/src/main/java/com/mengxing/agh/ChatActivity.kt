@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,10 +37,12 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.AddComment
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -98,10 +101,19 @@ fun ChatScreen(vm: ChatViewModel) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
+    var usageOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.items) {
         if (state.items.isNotEmpty()) {
             listState.animateScrollToItem(state.items.size - 1)
+        }
+    }
+
+    // 模型/权限切换成败提示
+    LaunchedEffect(state.settingsNotice) {
+        state.settingsNotice?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+            vm.clearSettingsNotice()
         }
     }
 
@@ -117,12 +129,21 @@ fun ChatScreen(vm: ChatViewModel) {
             )
         },
         bottomBar = {
-            InputBar(
-                value = input,
-                onValueChange = { input = it },
-                enabled = state.inputEnabled,
-                onSend = { vm.send(input); input = "" }
-            )
+            Column {
+                StatusStrip(
+                    state = state,
+                    onRequestModels = { vm.refreshModels() },
+                    onPickModel = { m -> vm.selectModel(m) },
+                    onOpenUsage = { vm.refreshUsage(); usageOpen = true },
+                    onPickYolo = { en -> vm.setYolo(en) }
+                )
+                InputBar(
+                    value = input,
+                    onValueChange = { input = it },
+                    enabled = state.inputEnabled,
+                    onSend = { vm.send(input); input = "" }
+                )
+            }
         }
     ) { inner ->
         Box(Modifier.fillMaxSize().padding(inner)) {
@@ -152,6 +173,14 @@ fun ChatScreen(vm: ChatViewModel) {
             onArchive = { sid, archived -> vm.archiveSession(sid, archived) },
             onFork = { s -> vm.forkSession(s) },
             onClearNotice = { vm.clearSessionsNotice() }
+        )
+    }
+
+    if (usageOpen) {
+        UsageSheet(
+            state = state,
+            onRefresh = { vm.refreshUsage() },
+            onDismiss = { usageOpen = false }
         )
     }
 }
@@ -578,6 +607,237 @@ private fun InputBar(
         }
     }
 }
+
+// ==================== 状态条（B 组：模型 / 用量 / 权限）====================
+
+@Composable
+private fun StatusStrip(
+    state: ChatUiState,
+    onRequestModels: () -> Unit,
+    onPickModel: (AcpClient.ModelInfo) -> Unit,
+    onOpenUsage: () -> Unit,
+    onPickYolo: (Boolean) -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    Surface(color = cs.background) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ModelChip(state, onRequestModels, onPickModel)
+            Spacer(Modifier.width(8.dp))
+            UsageChip(state.usage, onOpenUsage)
+            Spacer(Modifier.weight(1f))
+            PermChip(state.yolo, onPickYolo)
+        }
+    }
+}
+
+@Composable
+private fun ChipSurface(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        color = cs.surface,
+        shape = RoundedCornerShape(50),
+        border = BorderStroke(1.dp, cs.outline),
+        modifier = Modifier.clip(RoundedCornerShape(50)).clickable { onClick() }
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun ModelChip(
+    state: ChatUiState,
+    onRequestModels: () -> Unit,
+    onPickModel: (AcpClient.ModelInfo) -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    var open by remember { mutableStateOf(false) }
+    val current = state.sessionModel ?: state.usage?.modelId
+    Box {
+        ChipSurface(onClick = { onRequestModels(); open = true }) {
+            Icon(Icons.Outlined.AutoAwesome, null, tint = cs.primary, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                current ?: "选择模型",
+                style = MaterialTheme.typography.labelSmall,
+                color = cs.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (state.models.isEmpty()) {
+                DropdownMenuItem(text = { Text("（暂无模型列表）") }, onClick = { open = false })
+            } else {
+                state.models.forEach { m ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    (if (m.id == current) "✓ " else "   ") + m.id,
+                                    color = if (m.id == current) cs.primary else cs.onSurface
+                                )
+                                if (m.contextWindow > 0) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        fmtK(m.contextWindow),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = cs.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        },
+                        onClick = { open = false; onPickModel(m) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageChip(u: AcpClient.UsageInfo?, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    ChipSurface(onClick = onClick) {
+        Icon(Icons.Outlined.DataUsage, null, tint = cs.primary, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(
+            if (u == null || u.ctxWindow <= 0) "用量"
+            else fmtK(u.ctxTokens) + " / " + fmtK(u.ctxWindow) + " · " + pct(u.ctxTokens, u.ctxWindow),
+            style = MaterialTheme.typography.labelSmall,
+            color = cs.onSurface
+        )
+    }
+}
+
+@Composable
+private fun PermChip(yolo: Boolean, onPick: (Boolean) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val warn = Color(0xFFE0A030)
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ChipSurface(onClick = { open = true }) {
+            Icon(Icons.Outlined.Security, null, tint = if (yolo) warn else cs.primary, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                if (yolo) "完全权限" else "工作区内",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (yolo) warn else cs.onSurface
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text((if (!yolo) "✓ " else "   ") + "工作区内修改（默认）") },
+                onClick = { open = false; onPick(false) }
+            )
+            DropdownMenuItem(
+                text = { Text((if (yolo) "✓ " else "   ") + "完全权限（免逐次审批）") },
+                onClick = { open = false; onPick(true) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UsageSheet(
+    state: ChatUiState,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val u = state.usage
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surface) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "会话 Token 统计",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = cs.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onRefresh) { Text("刷新") }
+            }
+            Spacer(Modifier.height(6.dp))
+
+            if (u == null) {
+                Text("暂无用量数据：先在会话里发一条消息，或点「刷新」。", color = cs.onSurfaceVariant)
+                return@Column
+            }
+
+            // 上下文占用进度条
+            val frac = if (u.ctxWindow > 0) (u.ctxTokens.toFloat() / u.ctxWindow).coerceIn(0f, 1f) else 0f
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("上下文", style = MaterialTheme.typography.bodyMedium, color = cs.onSurface, modifier = Modifier.weight(1f))
+                Text(
+                    fmtK(u.ctxTokens) + " / " + fmtK(u.ctxWindow) + "  ·  " + pct(u.ctxTokens, u.ctxWindow),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = cs.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(cs.surfaceVariant)) {
+                if (frac > 0f) {
+                    Box(Modifier.fillMaxWidth(frac).height(8.dp).clip(RoundedCornerShape(4.dp)).background(cs.primary))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            UsageRow("累计输入", u.input)
+            UsageRow("累计输出", u.output)
+            UsageRow("总计", u.input + u.output)
+            UsageRow("缓存读取", u.cacheRead)
+            UsageRow("缓存写入", u.cacheWrite)
+            UsageRow("推理", u.reasoning)
+            Spacer(Modifier.height(6.dp))
+            UsageText("自动压缩", if (u.autoCompact) "已开启" else "已关闭")
+            UsageText("完全权限", if (u.yolo) "已开启" else "已关闭")
+            if (!u.modelId.isNullOrEmpty()) UsageText("当前模型", u.modelId)
+            if (u.costUsdMicros > 0) {
+                UsageText("费用", "≈ $" + java.lang.String.format(java.util.Locale.US, "%.4f", u.costUsdMicros / 1000000.0))
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageRow(label: String, value: Int) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(fmtNum(value) + "  (" + fmtK(value) + ")", style = MaterialTheme.typography.bodyMedium, color = cs.onSurface)
+    }
+}
+
+@Composable
+private fun UsageText(label: String, value: String) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = cs.onSurface)
+    }
+}
+
+/** 9216 → 9.2K；200000 → 200K；<1000 原样。 */
+private fun fmtK(n: Int): String = when {
+    n < 1000 -> n.toString()
+    n < 1000000 -> java.lang.String.format(java.util.Locale.US, "%.1fK", n / 1000.0).replace(".0K", "K")
+    else -> java.lang.String.format(java.util.Locale.US, "%.1fM", n / 1000000.0)
+}
+
+private fun fmtNum(n: Int): String =
+    java.text.NumberFormat.getIntegerInstance(java.util.Locale.US).format(n)
+
+private fun pct(a: Int, b: Int): String =
+    if (b <= 0) "—" else java.lang.String.format(java.util.Locale.US, "%.1f%%", a * 100.0 / b)
 
 // ==================== 历史会话抽屉 ====================
 

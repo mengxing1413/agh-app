@@ -531,11 +531,16 @@ public class AcpClient {
         return out;
     }
 
-    /** 同一条消息的多个分片共享 promptTurnId（_meta.ai.agnes.harness），用它做气泡聚合边界。 */
+    /**
+     * 消息聚合边界标识。注意不用 promptTurnId——历史重放时它恒为 0，会让所有消息被并成一个气泡；
+     * 用 eventSequence：同一条消息的多个内容块来自同一事件、序号相同，不同消息序号不同。
+     */
     private String extractTurnId(JSONObject params) {
         JSONObject meta = params.optJSONObject("_meta");
         JSONObject ag = meta == null ? null : meta.optJSONObject("ai.agnes.harness");
-        return ag == null ? "" : ag.optString("promptTurnId", "");
+        if (ag == null) return "";
+        String seq = ag.optString("eventSequence", "");
+        return seq.isEmpty() ? ag.optString("promptTurnId", "") : seq;
     }
 
     private String toStr(Object o) {

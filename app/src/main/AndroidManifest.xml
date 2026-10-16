@@ -12,18 +12,26 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
         android:theme="@style/Theme.AGH">
 
-        <!-- 原生对话页 = App 首页（ChatGPT 范式：打开即对话） -->
+        <!-- 多 Agent 首页 = App 主入口 -->
         <activity
-            android:name=".ChatActivity"
+            android:name=".HomeActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- 原生对话页（从首页进入） -->
+        <activity
+            android:name=".ChatActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
         </activity>
 
         <!-- AGH web 工作台（从对话页标题栏进入） -->

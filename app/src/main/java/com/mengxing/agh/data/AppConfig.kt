@@ -16,7 +16,11 @@ data class ServerProfile(
     val name: String,
     val url: String,
     val user: String,
-    val pass: String
+    val pass: String,
+    /** 后端类型：AGH / Nanobot / Hermes / Pi / OpenClaw */
+    val type: String = "AGH",
+    /** 首页头像用的 emoji */
+    val emoji: String = "🤖"
 ) {
     fun webUrl(): String {
         return try {

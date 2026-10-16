@@ -103,6 +103,17 @@ public class AcpClient {
             this.cacheRead = cacheRead; this.cacheWrite = cacheWrite; this.reasoning = reasoning;
             this.costUsdMicros = costUsdMicros; this.modelId = modelId; this.yolo = yolo;
         }
+
+        /**
+         * 用权威窗口值覆盖。服务端 usage.context.window 可能是过时值
+         * （改模型规格前建的会话仍报 200000，而模型目录已是 512000），
+         * 展示时以当前模型目录的 contextWindow 为准。
+         */
+        public UsageInfo withWindow(int window) {
+            if (window <= 0 || window == ctxWindow) return this;
+            return new UsageInfo(ctxTokens, window, autoCompact, input, output,
+                cacheRead, cacheWrite, reasoning, costUsdMicros, modelId, yolo);
+        }
     }
 
     /** 用量回调。 */
@@ -1037,7 +1048,13 @@ public class AcpClient {
     private static final String ADMIN_ORIGIN = "http://127.0.0.1:4177";
 
     private String adminUrl(String path) {
+        // 连接地址是 WS 形态（wss://host:port/__agh_ws），HTTP admin 面要的是干净的 http(s) 根地址：
+        // 不剥 /__agh_ws 与 ws(s) 协议会拼出 404（wss://host/__agh_ws/admin/...）。
         String base = url == null ? "" : url;
+        if (base.startsWith("wss://")) base = "https://" + base.substring(6);
+        else if (base.startsWith("ws://")) base = "http://" + base.substring(5);
+        int i = base.indexOf("/__agh_ws");
+        if (i > 0) base = base.substring(0, i);
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         return base + path;
     }

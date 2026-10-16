@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +63,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.mengxing.agh.data.AppConfig
 import com.mengxing.agh.data.ModelCatalog
+import com.mengxing.agh.data.ModelFavs
 import com.mengxing.agh.data.ServerProfile
 import com.mengxing.agh.ui.theme.YunoAppTheme
 import org.json.JSONObject
@@ -314,11 +316,17 @@ private fun SkinRow(selected: String, onPick: (String) -> Unit) {
         Triple("catppuccin", "猫布奇诺", YunoSkinDot(Color(0xFF89B4FA))),
         Triple("everforest", "永恒森林", YunoSkinDot(Color(0xFF7FBBB3)))
     )
+    // 柔光玻璃：小米澎湃 OS Soft Light Glass 风格（半透明面板 + 高光边 + 渐变壁纸打底）
+    val special = listOf(
+        Triple("glass", "柔光玻璃", YunoSkinDot(Color(0xFFA8CDBA)))
+    )
     SkinRowLine(basic, selected, onPick)
     Spacer(Modifier.height(6.dp))
     SkinRowLine(community, selected, onPick)
+    Spacer(Modifier.height(6.dp))
+    SkinRowLine(special, selected, onPick)
     Spacer(Modifier.height(4.dp))
-    Text("下排为社区主题（取自 dsh 社区配色，明暗双套）",
+    Text("社区主题取自 dsh 配色；「柔光玻璃」＝小米澎湃 OS 同款通透质感，明暗双套",
         style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
 }
 
@@ -738,6 +746,14 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
     var apiKey by remember { mutableStateOf("") }
     var specNote by remember { mutableStateOf("输入模型 id，自动匹配上下文窗口") }
 
+    // —— 模型管理：全量账号/模型 + 折叠 + 搜索 + 常用勾选 + 账号级刷新 ——
+    var acctList by remember { mutableStateOf<List<org.json.JSONObject>>(emptyList()) }
+    var expandedAcct by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+    var favs by remember { mutableStateOf(ModelFavs.load(ctx)) }
+    var refreshAt by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var refreshingId by remember { mutableStateOf<String?>(null) }
+
     // 读取当前配置
     fun loadConfig() {
         client.configGet(object : AcpClient.RespCb {
@@ -750,16 +766,20 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
                 }
                 // 上下文窗口：从 accounts[].models[] 里找当前模型
                 var win = ""
-                val accounts = result.optJSONArray("accounts")
-                if (accounts != null) {
+                val arr = result.optJSONArray("accounts")
+                if (arr != null) {
+                    // 全量账号 + 其模型列表 → 交给「模型管理」区按 key 分组折叠展示
+                    val list = (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i) }
+                    acctList = list
+                    if (expandedAcct == null) expandedAcct = list.firstOrNull()?.optString("accountId", "")
                     // 取第一个账号的 id：config.save/test 必带，否则保存报 CONFIG_TEST_FAILED
-                    if (accounts.length() > 0) {
-                        val a0 = accounts.optJSONObject(0)
+                    if (arr.length() > 0) {
+                        val a0 = arr.optJSONObject(0)
                         if (a0 != null && a0.optString("accountId", "").isNotEmpty())
                             accountId = a0.optString("accountId", accountId)
                     }
-                    outer@ for (i in 0 until accounts.length()) {
-                        val a = accounts.optJSONObject(i) ?: continue
+                    outer@ for (i in 0 until arr.length()) {
+                        val a = arr.optJSONObject(i) ?: continue
                         val ms = a.optJSONArray("models") ?: continue
                         for (j in 0 until ms.length()) {
                             val m = ms.optJSONObject(j) ?: continue
@@ -853,6 +873,68 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
         })
     }
 
+    /** 账号级刷新：config.test 从 provider 端点拉最新模型目录（只更新展示，不写回配置）。 */
+    fun refreshAccount(a: org.json.JSONObject) {
+        val acctId = a.optString("accountId", "")
+        if (acctId.isEmpty()) { status = "该账号缺少 accountId，无法刷新"; return }
+        refreshingId = acctId
+        status = "正在从 provider 拉取模型目录…"
+        val input = org.json.JSONObject().apply {
+            put("providerId", a.optString("providerId", providerId.ifEmpty { "agnes-ai" }))
+            put("baseUrl", a.optString("baseUrl", baseUrl))
+            put("accountId", acctId)
+            val def = a.optString("model", "")
+            if (def.isNotEmpty()) put("model", def)
+        }
+        client.configTest(input, object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                refreshingId = null
+                val fresh = result.optJSONArray("models")
+                if (fresh != null) {
+                    acctList = acctList.map { acc ->
+                        if (acc.optString("accountId", "") == acctId) {
+                            val merged = org.json.JSONObject(acc.toString())
+                            merged.put("models", fresh)
+                            merged
+                        } else acc
+                    }
+                    val now = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date())
+                    refreshAt = refreshAt + (acctId to now)
+                    status = "已刷新：$acctId · ${fresh.length()} 个模型"
+                } else status = "刷新完成，但未返回模型目录"
+            }
+
+            override fun onError(msg: String?) {
+                refreshingId = null
+                status = "刷新失败：" + AcpClient.friendlyError(msg)
+            }
+        })
+    }
+
+    /** 勾选/取消常用 —— 勾过的才出现在对话页小下拉。 */
+    fun toggleFav(id: String) {
+        val now = ModelFavs.toggle(ctx, id)
+        favs = ModelFavs.load(ctx)
+        status = if (now) "已加入常用「$id」→ 对话页小下拉可见"
+                 else "已移出常用「$id」"
+    }
+
+    /** 把某个账号下的某模型设为默认（写回 AGH：makeDefault=true）。 */
+    fun setDefaultModel(a: org.json.JSONObject, m: org.json.JSONObject) {
+        val mid = m.optString("id", "")
+        if (mid.isEmpty()) return
+        providerId = a.optString("providerId", providerId)
+        baseUrl = a.optString("baseUrl", baseUrl)
+        val accId = a.optString("accountId", "")
+        if (accId.isNotEmpty()) accountId = accId
+        modelId = mid
+        val w = m.optInt("contextWindow", 0)
+        if (w > 0) ctxWindow = w.toString()
+        status = "正在把默认模型设为 $mid …"
+        save(true)
+    }
+
     DisposableEffect(Unit) {
         client.setListener(object : AcpClient.Listener {
             override fun onConnected() {
@@ -915,6 +997,30 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(18.dp))
+        GroupTitle("模型管理 · 全量（按 key 折叠）")
+
+        OutlinedTextField(
+            value = query, onValueChange = { query = it },
+            label = { Text("搜索模型（跨 key，如 nemotron / kimi）") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+
+        ModelAccountsCard(
+            accounts = acctList,
+            query = query.trim(),
+            expandedId = expandedAcct,
+            onExpand = { id -> expandedAcct = if (expandedAcct == id) null else id },
+            favs = favs,
+            onToggleFav = { toggleFav(it) },
+            defaultModel = curModel,
+            onSetDefault = { a, m -> setDefaultModel(a, m) },
+            onRefresh = { a -> refreshAccount(a) },
+            refreshingId = refreshingId,
+            refreshAt = refreshAt
+        )
+
+        Spacer(Modifier.height(18.dp))
         GroupTitle("添加 / 切换模型")
 
         OutlinedTextField(
@@ -971,6 +1077,146 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
         Spacer(Modifier.height(14.dp))
         Text("说明：上下文窗口由内置规格库自动填写，可手动修改；保存后会写入 AGH 配置，状态条的「已用 / 窗口」即按此计算。",
             style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+    }
+}
+
+// ==================== 模型管理：按 key 折叠 + 全量 + 常用勾选 ====================
+// 结构：一个 key = 一个账号（account），账号下挂它的模型列表（NVIDIA 这类能到 80+）。
+// 默认按账号折叠，搜索时强制展开命中账号；勾选(常用) = 推送给对话页小下拉。
+
+@Composable
+private fun ModelAccountsCard(
+    accounts: List<org.json.JSONObject>,
+    query: String,
+    expandedId: String?,
+    onExpand: (String) -> Unit,
+    favs: Set<String>,
+    onToggleFav: (String) -> Unit,
+    defaultModel: String,
+    onSetDefault: (org.json.JSONObject, org.json.JSONObject) -> Unit,
+    onRefresh: (org.json.JSONObject) -> Unit,
+    refreshingId: String?,
+    refreshAt: Map<String, String>
+) {
+    val cs = MaterialTheme.colorScheme
+    if (accounts.isEmpty()) {
+        Text("账号加载中…（连接 AGH 后自动填充：一个 key 一个账号，账号下挂它的模型）",
+            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        return
+    }
+    val searching = query.isNotEmpty()
+
+    accounts.forEach { a ->
+        val acctId = a.optString("accountId", "")
+        val label = a.optString("label", "").ifEmpty { a.optString("providerId", "未命名账号") }
+        val provider = a.optString("providerId", "")
+        val defModel = a.optString("model", "")
+        val modelsArr = a.optJSONArray("models")
+        val all = ArrayList<org.json.JSONObject>()
+        if (modelsArr != null) {
+            for (i in 0 until modelsArr.length()) {
+                val mo = modelsArr.optJSONObject(i)
+                if (mo != null) all.add(mo)
+            }
+        }
+        val shown = if (searching) all.filter { mo ->
+            mo.optString("id", "").contains(query, true) ||
+                mo.optString("name", "").contains(query, true)
+        } else all
+        if (searching && shown.isEmpty()) return@forEach   // 搜索时跳过无命中的账号
+
+        val expanded = searching || expandedId == acctId
+
+        Surface(
+            color = cs.surface, shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, cs.outline),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(14.dp))
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable { onExpand(acctId) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("$label · $provider", style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium, color = cs.onSurface)
+                        Spacer(Modifier.height(2.dp))
+                        val meta = StringBuilder().append(all.size).append(" 个模型")
+                        if (defModel.isNotEmpty()) meta.append(" · 默认★ ").append(defModel)
+                        refreshAt[acctId]?.let { t -> meta.append(" · 刷新于 ").append(t) }
+                        Text(meta.toString(), style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { onRefresh(a) }, enabled = refreshingId == null) {
+                        Text(if (refreshingId == acctId) "刷新中…" else "刷新",
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                    Text(if (expanded) "▾" else "▸", color = cs.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelLarge)
+                }
+
+                if (expanded) {
+                    Box(Modifier.fillMaxWidth().height(1.dp)
+                        .background(cs.outline.copy(alpha = 0.4f)))
+                    if (shown.isEmpty()) {
+                        Text(if (searching) "搜索无命中" else "该账号下暂无模型",
+                            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                    shown.forEach { m ->
+                        val mid = m.optString("id", "")
+                        ModelRow(
+                            m = m,
+                            isDefault = mid.isNotEmpty() && mid == defModel,
+                            isFav = favs.contains(mid.lowercase()),
+                            onToggleFav = { onToggleFav(mid) },
+                            onSetDefault = { onSetDefault(a, m) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelRow(
+    m: org.json.JSONObject,
+    isDefault: Boolean,
+    isFav: Boolean,
+    onToggleFav: () -> Unit,
+    onSetDefault: () -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    val id = m.optString("id", "")
+    val win = m.optInt("contextWindow", 0)
+
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = isFav, onCheckedChange = { onToggleFav() })
+        Column(Modifier.weight(1f)) {
+            Text(id, style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isDefault) FontWeight.Bold else FontWeight.Normal,
+                color = cs.onSurface)
+            Text(
+                (if (win > 0) "${win / 1000}K 窗口" else "窗口未知") +
+                    (if (isDefault) " · 当前默认★" else if (isFav) " · 常用✓" else ""),
+                style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
+            )
+        }
+        if (isDefault) {
+            Text("★", color = cs.primary, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(6.dp))
+        } else {
+            TextButton(onClick = onSetDefault) {
+                Text("设为默认", style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }
 

@@ -371,7 +371,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     fun refreshModels() {
         acp.fetchModels(object : AcpClient.ModelsCb {
             override fun onResult(models: MutableList<AcpClient.ModelInfo>) {
-                _state.update { it.copy(models = models.toList()) }
+                _state.update { st ->
+                    val list = models.toList()
+                    // 目录到达后回修已持有的用量窗口（usage 可能先于 models 到、或带旧窗口）
+                    val old = st.usage
+                    val fixed = if (old != null) {
+                        val mid = if (!old.modelId.isNullOrEmpty()) old.modelId else st.sessionModel
+                        val w = list.firstOrNull { m -> m.id == mid }?.contextWindow ?: 0
+                        if (w > 0) old.withWindow(w) else old
+                    } else null
+                    st.copy(models = list, usage = fixed ?: old)
+                }
             }
             override fun onError(msg: String?) { /* 静默 */ }
         })
@@ -381,9 +391,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     fun refreshUsage() {
         acp.fetchUsage(object : AcpClient.UsageCb {
             override fun onResult(u: AcpClient.UsageInfo) {
-                _state.update {
-                    it.copy(usage = u, yolo = u.yolo,
-                        sessionModel = if (!u.modelId.isNullOrEmpty()) u.modelId else it.sessionModel)
+                _state.update { st ->
+                    // 服务端 usage.context.window 可能是过时值（改模型规格前建的会话仍报 200K），
+                    // 展示以模型目录里的权威 contextWindow 为准（如 agnes-3.0-flash=512000）。
+                    val mid = if (!u.modelId.isNullOrEmpty()) u.modelId else st.sessionModel
+                    val w = st.models.firstOrNull { m -> m.id == mid }?.contextWindow ?: 0
+                    val fixed = if (w > 0) u.withWindow(w) else u
+                    st.copy(usage = fixed, yolo = fixed.yolo,
+                        sessionModel = if (!fixed.modelId.isNullOrEmpty()) fixed.modelId else st.sessionModel)
                 }
             }
             override fun onError(msg: String?) { /* 静默 */ }

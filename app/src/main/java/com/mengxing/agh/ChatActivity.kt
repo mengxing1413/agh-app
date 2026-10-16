@@ -92,6 +92,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.mengxing.agh.data.AppConfig
+import com.mengxing.agh.data.ModelFavs
 
 /** YunoAgent 原生对话页（Compose 版）。 */
 class ChatActivity : ComponentActivity() {
@@ -99,8 +100,12 @@ class ChatActivity : ComponentActivity() {
     /** 主题配置快照（配色/皮肤/字号）。从设置页回来若变了 → 自动重建换肤，不用退出 App。 */
     private var uiSnap: String? = null
 
-    private fun uiConfig(): String =
-        AppConfig.theme(this) + "|" + AppConfig.skin(this) + "|" + AppConfig.fontScale(this)
+    /** 主题配置 + 常用模型勾选 的快照：从设置页回来若变了就自动重建（换肤 / 更新下拉列表）。 */
+    private fun uiConfig(): String {
+        val f = ModelFavs.load(this)
+        return AppConfig.theme(this) + "|" + AppConfig.skin(this) + "|" +
+            AppConfig.fontScale(this) + "|" + f.size + "#" + f.hashCode()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -830,6 +835,15 @@ private fun ModelChip(
     val cs = MaterialTheme.colorScheme
     var open by remember { mutableStateOf(false) }
     val current = state.sessionModel ?: state.usage?.modelId
+    val appCtx = LocalContext.current
+    // 小下拉只列「常用」（模型管理页勾选推送的）+ 当前会话模型保底置顶（没勾也能切回去）
+    val favIds = remember(open) { ModelFavs.load(appCtx) }
+    val visible = remember(state.models, favIds, current) {
+        val favs = state.models.filter { m -> favIds.contains(m.id.lowercase()) }
+        val cur = state.models.firstOrNull { m -> m.id == current }
+        val head = if (cur != null && favs.none { f -> f.id == cur.id }) listOf(cur) else emptyList()
+        head + favs
+    }
     Box {
         ChipSurface(onClick = { onRequestModels(); open = true }) {
             Icon(Icons.Outlined.AutoAwesome, null, tint = cs.primary, modifier = Modifier.size(14.dp))
@@ -843,10 +857,13 @@ private fun ModelChip(
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (state.models.isEmpty()) {
-                DropdownMenuItem(text = { Text("（暂无模型列表）") }, onClick = { open = false })
+            if (visible.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("未勾选常用模型 → 去 设置 · 模型管理 勾选", style = MaterialTheme.typography.bodySmall) },
+                    onClick = { open = false }
+                )
             } else {
-                state.models.forEach { m ->
+                visible.forEach { m ->
                     DropdownMenuItem(
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -2,7 +2,11 @@ package com.mengxing.agh.ui.theme
 
 import android.app.Activity
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -11,6 +15,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -45,7 +50,9 @@ private class Skin(
     val darkBg: Color,
     val darkSurface: Color,
     val darkSurfaceVariant: Color,
-    val darkOutline: Color
+    val darkOutline: Color,
+    /** 柔光玻璃：true 时 YunoTheme 先铺一层柔和渐变「壁纸」，面板用半透明色透出它。 */
+    val glass: Boolean = false
 )
 
 private val SKINS = mapOf(
@@ -130,6 +137,17 @@ private val SKINS = mapOf(
         Color(0xFFA7C080), Color(0xFF3D484D), Color(0xFFD3C6AA),
         Color(0xFFEEF4F1), Color(0xFFFFFFFF), Color(0xFFE2EBE7), Color(0xFFD2DED9),
         Color(0xFF2D353B), Color(0xFF343F44), Color(0xFF3D484D), Color(0xFF475258)
+    ),
+    // —— 柔光玻璃（参照小米澎湃 OS 4 Soft Light Glass 材质语言）———————————
+    // 半透明面板 + 高光边 + YunoTheme 铺的柔和渐变「壁纸」→ 通透的柔光质感。
+    "glass" to Skin(
+        Color(0xFF2F8C63), Color.White, Color(0xB3FFFFFF), Color(0xFF12301F),
+        Color(0xFF7C9F69), Color(0x99FFFFFF), Color(0xFF1C331F),
+        Color(0xFF8FC79B), Color(0xFF06281A), Color(0x33FFFFFF), Color(0xFFEAF6EE),
+        Color(0xFFA9D4B2), Color(0x2EFFFFFF), Color(0xFFDFF3E4),
+        Color(0xFFF4F3EE), Color(0xB8FFFFFF), Color(0x9CFFFFFF), Color(0x99FFFFFF),
+        Color(0xFF101216), Color(0x99000000), Color(0x85171A20), Color(0x4DFFFFFF),
+        glass = true
     )
 )
 
@@ -247,7 +265,26 @@ fun YunoTheme(
         colorScheme = colors,
         shapes = YunoShapes,
         typography = scaledTypography(fontScale),
-        content = content
+        content = {
+            if (s.glass) {
+                // 柔光玻璃：先铺一层柔和渐变「壁纸」，半透明面板/卡片透出它 —— 这就是通透柔光的来源。
+                // （真 backdrop 模糊在 Compose 单层里做不了，靠 渐变壁纸 + 半透明 + 高光边 达到同款观感）
+                Box(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier.matchParentSize().background(
+                            Brush.linearGradient(
+                                if (darkTheme) listOf(
+                                    Color(0xFF0E1014), Color(0xFF171C22), Color(0xFF10141A)
+                                ) else listOf(
+                                    Color(0xFFF9F8F3), Color(0xFFF0F4ED), Color(0xFFE9EEF5)
+                                )
+                            )
+                        )
+                    )
+                    content()
+                }
+            } else content()
+        }
     )
 }
 

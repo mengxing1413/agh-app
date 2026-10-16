@@ -1,5 +1,6 @@
 package com.mengxing.agh.ui.theme
 
+import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,8 +10,11 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.mengxing.agh.data.AppConfig
 
@@ -219,6 +223,26 @@ fun YunoTheme(
 ) {
     val s = SKINS[skin] ?: SKINS["green"]!!
     val colors = if (darkTheme) darkScheme(s) else lightScheme(s)
+
+    // window 背景 / 状态栏 / 导航栏跟随主题。
+    // 根因：Android 的 windowBackground 由 themes.xml 决定，只认系统深浅色
+    // （values / values-night），不认 App 内选的"固定深色" —— 页面根容器没涂色时
+    // 就会露出系统浅色的 #F6F7F9 白底（现象：选了深色，设置页仍是白底+深卡片）。
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val bg = colors.background.toArgb()
+                window.decorView.setBackgroundColor(bg)
+                @Suppress("DEPRECATION")
+                window.statusBarColor = bg
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = colors.surface.toArgb()
+            }
+        }
+    }
+
     MaterialTheme(
         colorScheme = colors,
         shapes = YunoShapes,

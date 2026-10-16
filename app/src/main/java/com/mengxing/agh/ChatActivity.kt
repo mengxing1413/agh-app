@@ -91,17 +91,37 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.mengxing.agh.data.AppConfig
 
 /** YunoAgent 原生对话页（Compose 版）。 */
 class ChatActivity : ComponentActivity() {
+
+    /** 主题配置快照（配色/皮肤/字号）。从设置页回来若变了 → 自动重建换肤，不用退出 App。 */
+    private var uiSnap: String? = null
+
+    private fun uiConfig(): String =
+        AppConfig.theme(this) + "|" + AppConfig.skin(this) + "|" + AppConfig.fontScale(this)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        uiSnap = uiConfig()
         setContent {
             YunoAppTheme {
                 val vm: ChatViewModel = viewModel()
                 ChatScreen(vm)
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val now = uiConfig()
+        if (uiSnap != null && uiSnap != now) {
+            uiSnap = now
+            recreate()   // 配置变了：重建本页换肤（会话由「锁定最后会话」逻辑自动恢复）
+            return
+        }
+        uiSnap = now
     }
 }
 

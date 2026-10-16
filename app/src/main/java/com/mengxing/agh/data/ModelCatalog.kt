@@ -28,7 +28,7 @@ object ModelCatalog {
     /** 内置规格：常用型号 + 常见档位。 */
     val SPECS: List<ModelSpec> = listOf(
         // ---- Agnes（AGH 当前默认厂商）----
-        ModelSpec("agnes-3.0-flash", "Agnes 3.0 Flash", 200000, 0.0, 0.0, false, "AGH 默认模型"),
+        ModelSpec("agnes-3.0-flash", "Agnes 3.0 Flash", 512000, 0.0, 0.0, false, "官方 512K · 最大输出 65,536"),
         ModelSpec("agnes-2.5-pro", "Agnes 2.5 Pro", 200000, 0.0, 0.0, true),
         ModelSpec("agnes-2.5-pro-alpha", "Agnes 2.5 Pro Alpha", 200000, 0.0, 0.0, true),
         ModelSpec("agnes-2.5-pro-beta", "Agnes 2.5 Pro Beta", 200000, 0.0, 0.0, true),

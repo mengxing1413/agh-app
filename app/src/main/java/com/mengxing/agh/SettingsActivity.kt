@@ -731,6 +731,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
     var baseUrl by remember { mutableStateOf("") }
     var curModel by remember { mutableStateOf("") }
     var curCtx by remember { mutableStateOf("") }
+    var accountId by remember { mutableStateOf("") }   // 服务端账号 id：config.save/test 必带，否则保存报 CONFIG_TEST_FAILED
 
     var modelId by remember { mutableStateOf("") }
     var ctxWindow by remember { mutableStateOf("") }
@@ -751,6 +752,12 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
                 var win = ""
                 val accounts = result.optJSONArray("accounts")
                 if (accounts != null) {
+                    // 取第一个账号的 id：config.save/test 必带，否则保存报 CONFIG_TEST_FAILED
+                    if (accounts.length() > 0) {
+                        val a0 = accounts.optJSONObject(0)
+                        if (a0 != null && a0.optString("accountId", "").isNotEmpty())
+                            accountId = a0.optString("accountId", accountId)
+                    }
                     outer@ for (i in 0 until accounts.length()) {
                         val a = accounts.optJSONObject(i) ?: continue
                         val ms = a.optJSONArray("models") ?: continue
@@ -771,7 +778,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
                 status = if (p == null) "尚未配置模型，请在下方添加" else "已读取配置"
             }
 
-            override fun onError(msg: String?) { status = "读取配置失败：" + (msg ?: "") }
+            override fun onError(msg: String?) { status = "读取配置失败：" + AcpClient.friendlyError(msg) }
         })
     }
 
@@ -794,6 +801,8 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
         val win = ctxWindow.trim().toIntOrNull() ?: 0
         val input = JSONObject().apply {
             put("providerId", providerId.ifEmpty { "agnes-ai" })
+            // 必带账号 id：服务端保存前会自动跑连通测试，缺它就报 CONFIG_TEST_FAILED
+            if (accountId.isNotEmpty()) put("accountId", accountId)
             if (baseUrl.trim().isNotEmpty()) put("baseUrl", baseUrl.trim())
             if (apiKey.trim().isNotEmpty()) put("apiKey", apiKey.trim())
             put("model", modelId.trim())
@@ -816,7 +825,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
 
             override fun onError(msg: String?) {
                 busy = false
-                status = "保存失败：" + (msg ?: "")
+                status = "保存失败：" + AcpClient.friendlyError(msg)
             }
         })
     }
@@ -829,6 +838,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
             if (baseUrl.trim().isNotEmpty()) put("baseUrl", baseUrl.trim())
             if (apiKey.trim().isNotEmpty()) put("apiKey", apiKey.trim())
             if (modelId.trim().isNotEmpty()) put("model", modelId.trim())
+            if (accountId.isNotEmpty()) put("accountId", accountId)
         }
         client.configTest(input, object : AcpClient.RespCb {
             override fun onResult(result: JSONObject) {
@@ -838,7 +848,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
 
             override fun onError(msg: String?) {
                 busy = false
-                status = "✗ 测试失败：" + (msg ?: "")
+                status = "✗ 测试失败：" + AcpClient.friendlyError(msg)
             }
         })
     }
@@ -972,14 +982,37 @@ private data class ManageItem(val title: String, val subtitle: String, val id: S
 
 /** 从返回里尽量抽出条目列表（各分区字段名不一，逐个试）。 */
 private fun parseManageItems(result: org.json.JSONObject): List<ManageItem> {
-    val arrKeys = listOf("packages", "servers", "resources", "skills", "extensions", "items", "entries", "list")
+    val arrKeys = listOf(
+        "packages", "servers", "resources", "skills", "extensions",
+        "items", "entries", "list", "modules", "rows", "surfaces", "statuses"
+    )
     var arr: org.json.JSONArray? = null
     for (k in arrKeys) {
         arr = result.optJSONArray(k)
-        if (arr != null) break
+        if (arr != null && arr.length() > 0) break
+        if (arr != null && arr.length() == 0) arr = null      // 空数组继续找别的键
     }
     if (arr == null) {
-        // 有时是 {items:{...}} 或直接是对象集合
+        // items 为空时退化展示 skillRoots（技能/资源的根状态）等辅助结构
+        for (k in listOf("skillRoots", "skillRoot", "roots")) {
+            val alt = result.optJSONArray(k)
+            if (alt != null && alt.length() > 0) {
+                return (0 until alt.length()).mapNotNull { i ->
+                    val o = alt.optJSONObject(i) ?: return@mapNotNull null
+                    val key = o.optString("rootKey", o.optString("root", ""))
+                    val scope = o.optString("scope", "")
+                    val st = o.optString("state", "")
+                    val nm = o.optString("workspaceId", "")
+                    ManageItem(
+                        if (key.isEmpty()) "(根)" else "$key",
+                        listOf(scope, st, if (nm.isEmpty()) "" else "ws:" + nm.take(8))
+                            .filter { it.isNotEmpty() }.joinToString(" · "),
+                        key, o
+                    )
+                }
+            }
+        }
+        // 或是对象集合 {k: {...}}
         val obj = result.optJSONObject("items") ?: result.optJSONObject("data")
         if (obj != null) {
             val out = mutableListOf<ManageItem>()
@@ -998,11 +1031,17 @@ private fun parseManageItems(result: org.json.JSONObject): List<ManageItem> {
 }
 
 private fun itemFrom(fallbackId: String, o: org.json.JSONObject): ManageItem {
-    val id = o.optString("id", o.optString("name", fallbackId))
-    val name = o.optString("name", o.optString("title", o.optString("label", id)))
-    val status = o.optString("status", o.optString("state", ""))
+    val id = o.optString("id", o.optString("name",
+        o.optString("rootKey", o.optString("path", fallbackId))))
+    val name = o.optString("name", o.optString("title",
+        o.optString("label", o.optString("rootKey", id))))
+    val status = o.optString("status", o.optString("state",
+        o.optString("desired", o.optString("actual", ""))))
     val ver = o.optString("version", "")
-    val sub = listOf(ver, status).filter { it.isNotEmpty() }.joinToString(" · ")
+    val trust = when (o.optBoolean("trusted", false)) {
+        true -> "已信任"; false -> if (o.has("trusted")) "未信任" else ""
+    }
+    val sub = listOf(ver, status, trust).filter { it.isNotEmpty() }.joinToString(" · ")
     return ManageItem(name, sub, id, o)
 }
 
@@ -1014,8 +1053,9 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
 
     var tab by remember { mutableStateOf("packages") }
     var loading by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("正在连接 AGH…") }
+    var status by remember { mutableStateOf("正在加载管理面…") }
     var items by remember { mutableStateOf<List<ManageItem>>(emptyList()) }
+    var profileName by remember { mutableStateOf("") }   // 管理面 profile：POST body 必须与之一致
 
     fun load() {
         loading = true
@@ -1024,23 +1064,43 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
             override fun onResult(result: org.json.JSONObject) {
                 items = parseManageItems(result)
                 loading = false
-                status = if (items.isEmpty()) "无数据（该分区可能为内部接口）" else "共 ${items.size} 项"
+                status = if (items.isEmpty()) "暂无内容（服务端该分区为空）"
+                         else "共 ${items.size} 项 · profile $profileName"
             }
 
             override fun onError(msg: String?) {
                 loading = false
-                status = "加载失败：" + (msg ?: "")
+                status = "加载失败：" + AcpClient.friendlyError(msg)
                 items = emptyList()
             }
         }
+        // 管理动作走 HTTP admin 面（WS 侧会 CAPABILITY_DENIED）：
+        // 先 GET context 拿 profile，再 POST 对应 action。
+        fun ctxThen(actionPath: String) {
+            client.adminGet("/admin/plugins/api/context", object : AcpClient.RespCb {
+                override fun onResult(ctx: org.json.JSONObject) {
+                    profileName = ctx.optString("profile", profileName)
+                    val body = org.json.JSONObject().put("profile", profileName)
+                    client.adminPost(actionPath, body, cb)
+                }
+                override fun onError(msg: String?) { cb.onError(msg) }
+            })
+        }
         when (tab) {
-            "packages" -> client.packagesRead(cb)
-            "mcp" -> client.mcpRead(cb)
-            "resources" -> client.resourcesRead(cb)
-            "skills" -> client.skillsRefresh(cb)
+            "packages" -> ctxThen("/admin/plugins/api/list")
+            "mcp" -> ctxThen("/admin/resources/api/mcp/list")
+            "skills", "resources" -> ctxThen("/admin/resources/api/skills/list")
             "extensions" -> {
-                items = emptyList(); loading = false
-                status = "扩展需按 id 调用（extension.call），暂无列表接口"
+                // 扩展列表是 WS 方法（clientModules.list，实测可用），也要 profile
+                if (profileName.isEmpty()) {
+                    client.adminGet("/admin/plugins/api/context", object : AcpClient.RespCb {
+                        override fun onResult(ctx: org.json.JSONObject) {
+                            profileName = ctx.optString("profile", profileName)
+                            client.clientModulesList(profileName, cb)
+                        }
+                        override fun onError(msg: String?) { cb.onError(msg) }
+                    })
+                } else client.clientModulesList(profileName, cb)
             }
         }
     }

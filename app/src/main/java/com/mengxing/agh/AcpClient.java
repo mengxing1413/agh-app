@@ -13,8 +13,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import java.io.IOException;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
@@ -158,6 +163,40 @@ public class AcpClient {
 
     public interface RespCb { void onResult(JSONObject result); void onError(String msg); }
 
+    /**
+     * 把 JSON-RPC 错误码翻成人话。request() 会把 error.data.reason 拼成 message|reason 透传，
+     * 这里按已知码给出可执行的中文提示 —— 用户不该看到 SEMANTIC_REJECTED 这种黑话。
+     */
+    public static String friendlyError(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "未知错误（服务端无返回）";
+        if (raw.contains("CONFIG_TEST_FAILED"))
+            return "服务端连通测试失败：请检查 API Key 与接口地址是否正确";
+        if (raw.contains("CONFIG_INVALID_INPUT"))
+            return "参数被服务端拒绝：上下文窗口超过该模型登记上限，或字段不合法";
+        if (raw.contains("CAPABILITY_DENIED"))
+            return "权限不足：AGH 未授予此连接管理权限（包 / MCP / 资源需管理员授权）";
+        if (raw.contains("METHOD_NOT_FOUND"))
+            return "服务端不支持该方法：AGH 版本可能过旧，请更新服务端";
+        if (raw.contains("E_ADMIN_ORIGIN") || raw.contains("E_ADMIN_SCOPE"))
+            return "管理请求被拒：来源或配置不匹配（需连接 AGH 反代入口）";
+        if (raw.contains("E_ADMIN_ROUTE") || raw.contains("E_RESOURCE_ADMIN_ROUTE"))
+            return "该管理操作在服务端不存在";
+        if (raw.contains("E_ADMIN_BACKEND"))
+            return "后端管理服务未确认该操作，请稍后重试";
+        if (raw.contains("E_ADMIN_REQUEST"))
+            return "管理参数不合法";
+        if (raw.contains("INVALID_PARAMS"))
+            return "参数不合法：" + raw.replace('|', '·');
+        if (raw.contains("SEMANTIC_REJECTED")) {
+            int i = raw.indexOf('|');
+            String reason = i >= 0 ? raw.substring(i + 1) : "";
+            return if (reason.isEmpty()) "服务端语义拒绝：请检查输入内容"
+                   else "服务端语义拒绝：" + reason;
+        }
+        if (raw.contains("CAPABILITY") || raw.contains("NOT_FOUND")) return "操作未生效：" + raw.replace('|', '·');
+        return raw.replace('|', '·');
+    }
+
     /** 断线/重连时清掉悬挂的请求回调，避免调用方永远等待。 */
     private void clearPending(String msg) {
         if (pending.isEmpty()) return;
@@ -270,9 +309,19 @@ public class AcpClient {
                 RespCb cb = pending.remove(id);
                 if (cb != null) {
                     if (m.has("error")) {
-                        String msg = m.optJSONObject("error") != null
-                            ? m.optJSONObject("error").optString("message", "error") : "error";
-                        main.post(() -> cb.onError(msg));
+                        JSONObject err = m.optJSONObject("error");
+                        String msg = err != null ? err.optString("message", "error") : "error";
+                        // 透传 data（reason/code/method），供 UI 汉化显示细节
+                        if (err != null) {
+                            JSONObject d = err.optJSONObject("data");
+                            if (d != null) {
+                                String reason = d.optString("reason", "");
+                                if (reason.isEmpty()) reason = d.optString("code", "");
+                                if (!reason.isEmpty() && !msg.contains(reason)) msg = msg + "|" + reason;
+                            }
+                        }
+                        final String detail = msg;
+                        main.post(() -> cb.onError(detail));
                     } else {
                         JSONObject result = m.optJSONObject("result");
                         main.post(() -> cb.onResult(result == null ? new JSONObject() : result));
@@ -979,6 +1028,86 @@ public class AcpClient {
             params.put("sessionId", sessionId);
             notify("session/cancel", params);
         } catch (Exception ignored) {}
+    }
+
+    // —— HTTP admin 面 ——
+    // 包/MCP/技能/资源管理的 WS 方法会被拒（CAPABILITY_DENIED：admin authority 只授予本机 Unix 连接），
+    // 但 AGH launcher 把同一套能力经 HTTP 暴露出来：/admin/plugins/api/* 与 /admin/resources/api/*，
+    // 只校验 origin=loopback —— 反代正好把 Host/Origin 改写成 loopback，故 App 走这条现成通道即可。
+    private static final String ADMIN_ORIGIN = "http://127.0.0.1:4177";
+
+    private String adminUrl(String path) {
+        String base = url == null ? "" : url;
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + path;
+    }
+
+    private String basicCred() {
+        return android.util.Base64.encodeToString(
+            (user + ":" + pass).getBytes(), android.util.Base64.NO_WRAP);
+    }
+
+    /** GET 管理面（如 /admin/plugins/api/context → profile/permissions/readOnly）。 */
+    public void adminGet(String path, RespCb cb) {
+        Request req = new Request.Builder()
+            .url(adminUrl(path))
+            .header("Authorization", "Basic " + basicCred())
+            .header("Origin", ADMIN_ORIGIN)
+            .get().build();
+        enqueueAdmin(req, cb);
+    }
+
+    /** POST 管理动作（body 必带 profile；服务端强制校验 Origin 头，故必带）。 */
+    public void adminPost(String path, JSONObject body, RespCb cb) {
+        RequestBody rb = RequestBody.create(
+            body.toString(), MediaType.parse("application/json; charset=utf-8"));
+        Request req = new Request.Builder()
+            .url(adminUrl(path))
+            .header("Authorization", "Basic " + basicCred())
+            .header("Origin", ADMIN_ORIGIN)
+            .post(rb).build();
+        enqueueAdmin(req, cb);
+    }
+
+    private void enqueueAdmin(Request req, RespCb cb) {
+        if (cb == null) return;
+        final RespCb callback = cb;
+        client.newCall(req).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                main.post(() -> callback.onError("网络错误：" + e.getMessage()));
+            }
+            @Override public void onResponse(Call call, Response response) {
+                String text = "";
+                try { text = response.body() != null ? response.body().string() : ""; }
+                catch (IOException ignored) {}
+                final String bodyText = text;
+                final boolean ok = response.isSuccessful();
+                final int httpCode = response.code();
+                main.post(() -> {
+                    if (!ok) {
+                        // AGH admin 错误体：{"error":{"code":"E_ADMIN_*","message":"..."}}
+                        String adminErr = "";
+                        try {
+                            JSONObject e = new JSONObject(bodyText).optJSONObject("error");
+                            if (e != null) adminErr = e.optString("code", "") + "|" + e.optString("message", "");
+                        } catch (JSONException ignored) {}
+                        callback.onError("HTTP " + httpCode + (adminErr.isEmpty() ? "" : "|" + adminErr));
+                    } else {
+                        try { callback.onResult(new JSONObject(bodyText)); }
+                        catch (JSONException e) {
+                            callback.onError("响应不是 JSON：" + bodyText.substring(0, Math.min(120, bodyText.length())));
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /** 扩展模块列表（WS 方法，实测可用；params 必带 profile）。 */
+    public void clientModulesList(String profile, RespCb cb) {
+        JSONObject p = new JSONObject();
+        try { p.put("profile", profile); } catch (JSONException ignored) {}
+        request("_agnes/v1/clientModules.list", p, cb);
     }
 
     public void close() {

@@ -562,6 +562,102 @@ public class AcpClient {
         }
     }
 
+    // ==================== AGH 管理（D18-D22）====================
+    // 技能 / MCP / 扩展 / 资源 / 包管理，对应网页版设置页的各分区。
+
+    /** D18 技能：刷新技能列表（skills.refresh）。 */
+    public void skillsRefresh(RespCb cb) {
+        request("_agnes/v1/skills.refresh", new JSONObject(), cb);
+    }
+
+    /** D18 技能：信任某技能（skills.trust）。 */
+    public void skillsTrust(String id, boolean trust, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            p.put("trust", trust);
+            request("_agnes/v1/skills.trust", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /** D19 MCP：读 MCP 配置（mcp.read）。 */
+    public void mcpRead(RespCb cb) {
+        request("_agnes/v1/mcp.read", new JSONObject(), cb);
+    }
+
+    /** D19 MCP：测试连通（mcp.test）。 */
+    public void mcpTest(String id, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            request("_agnes/v1/mcp.test", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /** D19 MCP：重连（mcp.reconnect）。 */
+    public void mcpReconnect(String id, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            request("_agnes/v1/mcp.reconnect", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /** D21 资源：读资源（resources.read）。 */
+    public void resourcesRead(RespCb cb) {
+        request("_agnes/v1/resources.read", new JSONObject(), cb);
+    }
+
+    /** D21 资源：对账/刷新（resources.reconcile）。 */
+    public void resourcesReconcile(RespCb cb) {
+        request("_agnes/v1/resources.reconcile", new JSONObject(), cb);
+    }
+
+    /** D22 包管理：读已安装包（packages.read）。 */
+    public void packagesRead(RespCb cb) {
+        request("_agnes/v1/packages.read", new JSONObject(), cb);
+    }
+
+    /** D22 包管理：安装（packages.install）。 */
+    public void packagesInstall(String spec, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("spec", spec);
+            request("_agnes/v1/packages.install", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /** D22 包管理：卸载（packages.remove）。 */
+    public void packagesRemove(String id, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            request("_agnes/v1/packages.remove", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
+    /** D20 扩展：调用扩展服务（extension.call）。 */
+    public void extensionCall(String id, JSONObject input, RespCb cb) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", id);
+            if (input != null) p.put("input", input);
+            request("_agnes/v1/extension.call", p, cb);
+        } catch (Exception e) {
+            if (cb != null) cb.onError(e.getMessage());
+        }
+    }
+
     /** AGH 工作区条目（_agnes/v1/workspace.list 的 items）。 */
     public static class Workspace {
         public final String path, name;

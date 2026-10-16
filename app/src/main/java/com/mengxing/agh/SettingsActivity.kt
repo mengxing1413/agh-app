@@ -126,12 +126,15 @@ private fun SettingsApp(onClose: () -> Unit) {
 
         "models" -> ModelsScreen(ctx = ctx, onBack = { screen = "main" })
 
+        "manage" -> ManageScreen(ctx = ctx, onBack = { screen = "main" })
+
         else -> MainSettings(
             ctx = ctx,
             active = AppConfig.activeProfile(ctx),
             onClose = onClose,
             onManageConnections = { screen = "connections" },
-            onManageModels = { screen = "models" }
+            onManageModels = { screen = "models" },
+            onManageAGH = { screen = "manage" }
         )
     }
 }
@@ -144,7 +147,8 @@ private fun MainSettings(
     active: ServerProfile,
     onClose: () -> Unit,
     onManageConnections: () -> Unit,
-    onManageModels: () -> Unit
+    onManageModels: () -> Unit,
+    onManageAGH: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     var theme by remember { mutableStateOf(AppConfig.theme(ctx)) }
@@ -224,6 +228,32 @@ private fun MainSettings(
                         style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 }
                 Text("管理 ›", style = MaterialTheme.typography.labelMedium, color = cs.primary)
+            }
+        }
+
+        GroupTitle("AGH 管理")
+        Surface(
+            color = cs.surface, shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, cs.outline),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .clickable { onManageAGH() }
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(cs.secondaryContainer),
+                    contentAlignment = Alignment.Center) {
+                    Text("⚙", color = cs.onSecondaryContainer,
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("技能 / MCP / 包管理",
+                        style = MaterialTheme.typography.bodyLarge, color = cs.onSurface,
+                        fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text("查看并管理 AGH 的包、MCP 服务、技能、资源",
+                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+                Text("进入 ›", style = MaterialTheme.typography.labelMedium, color = cs.primary)
             }
         }
 
@@ -930,5 +960,209 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
         Spacer(Modifier.height(14.dp))
         Text("说明：上下文窗口由内置规格库自动填写，可手动修改；保存后会写入 AGH 配置，状态条的「已用 / 窗口」即按此计算。",
             style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+    }
+}
+
+// ==================== AGH 管理（D18-D22）====================
+// 技能 / MCP / 扩展 / 资源 / 包管理，对齐网页版设置页各分区。
+
+/** 管理条目（通用解析：尽量取 id/name/title/status，取不到就兜底显示）。 */
+private data class ManageItem(val title: String, val subtitle: String, val id: String, val raw: org.json.JSONObject)
+
+/** 从返回里尽量抽出条目列表（各分区字段名不一，逐个试）。 */
+private fun parseManageItems(result: org.json.JSONObject): List<ManageItem> {
+    val arrKeys = listOf("packages", "servers", "resources", "skills", "extensions", "items", "entries", "list")
+    var arr: org.json.JSONArray? = null
+    for (k in arrKeys) {
+        arr = result.optJSONArray(k)
+        if (arr != null) break
+    }
+    if (arr == null) {
+        // 有时是 {items:{...}} 或直接是对象集合
+        val obj = result.optJSONObject("items") ?: result.optJSONObject("data")
+        if (obj != null) {
+            val out = mutableListOf<ManageItem>()
+            for (k in obj.keys()) {
+                val v = obj.optJSONObject(k) ?: continue
+                out.add(itemFrom(k, v))
+            }
+            return out
+        }
+        return emptyList()
+    }
+    return (0 until arr.length()).mapNotNull { i ->
+        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+        itemFrom("", o)
+    }
+}
+
+private fun itemFrom(fallbackId: String, o: org.json.JSONObject): ManageItem {
+    val id = o.optString("id", o.optString("name", fallbackId))
+    val name = o.optString("name", o.optString("title", o.optString("label", id)))
+    val status = o.optString("status", o.optString("state", ""))
+    val ver = o.optString("version", "")
+    val sub = listOf(ver, status).filter { it.isNotEmpty() }.joinToString(" · ")
+    return ManageItem(name, sub, id, o)
+}
+
+@Composable
+private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val profile = remember { AppConfig.activeProfile(ctx) }
+    val client = remember { AcpClient() }
+
+    var tab by remember { mutableStateOf("packages") }
+    var loading by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("正在连接 AGH…") }
+    var items by remember { mutableStateOf<List<ManageItem>>(emptyList()) }
+
+    fun load() {
+        loading = true
+        status = "加载中…"
+        val cb = object : AcpClient.RespCb {
+            override fun onResult(result: org.json.JSONObject) {
+                items = parseManageItems(result)
+                loading = false
+                status = if (items.isEmpty()) "无数据（该分区可能为内部接口）" else "共 ${items.size} 项"
+            }
+
+            override fun onError(msg: String?) {
+                loading = false
+                status = "加载失败：" + (msg ?: "")
+                items = emptyList()
+            }
+        }
+        when (tab) {
+            "packages" -> client.packagesRead(cb)
+            "mcp" -> client.mcpRead(cb)
+            "resources" -> client.resourcesRead(cb)
+            "skills" -> client.skillsRefresh(cb)
+            "extensions" -> {
+                items = emptyList(); loading = false
+                status = "扩展需按 id 调用（extension.call），暂无列表接口"
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        client.setListener(object : AcpClient.Listener {
+            override fun onConnected() { status = "已连接"; load() }
+            override fun onError(msg: String?) { status = "连接失败：" + (msg ?: "") }
+            override fun onClosed() {}
+            override fun onReconnecting(msg: String?) {}
+            override fun onMessageChunk(text: String?) {}
+            override fun onAgentMessage(text: String?) {}
+            override fun onToolCall(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
+            override fun onToolCallUpdate(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
+            override fun onPermissionRequest(reqId: Any?, title: String?, options: MutableList<AcpClient.PermOption>?) {}
+            override fun onUserMessage(text: String?) {}
+            override fun onSessionLoaded(sid: String?) {}
+            override fun onPromptDone(stopReason: String?) {}
+        })
+        client.connect(profile.url, profile.user, profile.pass)
+        onDispose { try { client.close() } catch (_: Exception) {} }
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 32.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, "返回", tint = cs.onSurfaceVariant)
+            }
+            Text("AGH 管理", style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold, color = cs.onBackground)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        // 分区切换
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ManageTab("包", tab == "packages") { tab = "packages"; load() }
+            ManageTab("MCP", tab == "mcp") { tab = "mcp"; load() }
+            ManageTab("技能", tab == "skills") { tab = "skills"; load() }
+            ManageTab("资源", tab == "resources") { tab = "resources"; load() }
+            ManageTab("扩展", tab == "extensions") { tab = "extensions"; load() }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(status, style = MaterialTheme.typography.bodySmall,
+            color = if (status.contains("失败")) cs.error else cs.onSurfaceVariant)
+
+        Spacer(Modifier.height(12.dp))
+        if (loading) {
+            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+        } else if (items.isEmpty()) {
+            Surface(color = cs.surface, shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, cs.outline), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("暂无内容", color = cs.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { load() }) { Text("刷新") }
+                }
+            }
+        } else {
+            items.forEach { item ->
+                Surface(
+                    color = cs.surface, shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, cs.outline),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(item.title, style = MaterialTheme.typography.bodyLarge,
+                                color = cs.onSurface, fontWeight = FontWeight.Medium)
+                            if (item.subtitle.isNotEmpty()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(item.subtitle, style = MaterialTheme.typography.bodySmall,
+                                    color = cs.onSurfaceVariant)
+                            }
+                            if (item.id.isNotEmpty() && item.id != item.title) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(item.id, style = MaterialTheme.typography.labelSmall,
+                                    color = cs.onSurfaceVariant, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        // 分区相关操作
+                        when (tab) {
+                            "mcp" -> {
+                                TextButton(onClick = {
+                                    status = "测试中…"
+                                    client.mcpTest(item.id, object : AcpClient.RespCb {
+                                        override fun onResult(r: org.json.JSONObject) { status = "✓ ${item.title} 连通" }
+                                        override fun onError(m: String?) { status = "✗ ${item.title}：${m ?: ""}" }
+                                    })
+                                }) { Text("测试") }
+                            }
+                            "packages" -> {
+                                TextButton(onClick = {
+                                    status = "卸载中…"
+                                    client.packagesRemove(item.id, object : AcpClient.RespCb {
+                                        override fun onResult(r: org.json.JSONObject) { status = "已卸载 ${item.title}"; load() }
+                                        override fun onError(m: String?) { status = "卸载失败：${m ?: ""}" }
+                                    })
+                                }) { Text("卸载", color = cs.error) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageTab(text: String, selected: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) cs.primaryContainer else cs.surface,
+        border = BorderStroke(1.dp, if (selected) cs.primary else cs.outline),
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { onClick() }
+    ) {
+        Text(text, Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) cs.onPrimaryContainer else cs.onSurfaceVariant)
     }
 }

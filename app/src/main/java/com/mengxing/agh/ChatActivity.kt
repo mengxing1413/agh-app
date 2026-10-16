@@ -210,9 +210,10 @@ fun ChatScreen(vm: ChatViewModel) {
                     onAttachFile = { pickFile.launch("*/*") },
                     onRemoveAtt = { i -> pendingAtt = pendingAtt.filterIndexed { idx, _ -> idx != i } },
                     onSend = {
-                        val blocks = pendingAtt.map { it.toBlock() }
-                        val labels = pendingAtt.filter { !it.isImage }.map { it.label }
-                        val images = pendingAtt.filter { it.isImage }.map { it.base64 }
+                        val real = pendingAtt.filter { it.base64.isNotEmpty() }   // 排掉“过大未附加”的占位附件
+                        val blocks = real.map { it.toBlock() }
+                        val labels = real.filter { !it.isImage }.map { it.label }
+                        val images = real.filter { it.isImage }.map { it.base64 }
                         vm.send(input, labels, images, blocks)
                         input = ""
                         pendingAtt = emptyList()
@@ -1392,12 +1393,22 @@ private data class PendingAtt(
     val base64: String,
     val isImage: Boolean
 ) {
-    /** 组装成 AGH 的 ContentBlock。 */
+    /** 组装成 AGH/ACP 的 ContentBlock。 */
     fun toBlock(): org.json.JSONObject = org.json.JSONObject().apply {
-        put("type", if (isImage) "image" else "file")
-        put("data", base64)
-        put("mimeType", mimeType)
-        if (!isImage) put("name", label)   // 文件块必填文件名；图片块不带
+        if (isImage) {
+            put("type", "image")
+            put("data", base64)
+            put("mimeType", mimeType)
+        } else {
+            // ACP 的文件附件是 EmbeddedResource：{type:"resource", resource:{uri,mimeType,blob}}。
+            // 服务端不认 type:"file"（会报 INVALID_PARAMS/ENUM），这是 0.3.7 之前文件发不出去的根因。
+            put("type", "resource")
+            put("resource", org.json.JSONObject().apply {
+                put("uri", "file:///attachments/" + android.net.Uri.encode(label))
+                put("mimeType", mimeType)
+                put("blob", base64)
+            })
+        }
     }
 }
 
@@ -1415,6 +1426,10 @@ private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage:
         cr.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
     } catch (e: Exception) {
         ByteArray(0)
+    }
+    // 超大文件：WS 发送队列上限约 16MB，超限会直接把连接判死，这里先拦下并给明确提示
+    if (bytes.size > 10 * 1024 * 1024) {
+        return PendingAtt("$name（文件超过 10MB，未附加）", mime, "", isImage)
     }
     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
     return PendingAtt(name, mime, b64, isImage)

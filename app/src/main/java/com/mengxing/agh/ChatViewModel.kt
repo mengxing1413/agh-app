@@ -109,6 +109,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
 
     private var streamingAgentKey: String? = null   // 正在流式输出的 agent 气泡
     private var userEchoKey: String? = null          // 历史回放中聚合的用户气泡
+    private var userEchoTurnId: String? = null       // 该用户气泡所属 turn（同 turn 的分片才聚合）
     private var historyMode = false                  // 是否处于历史加载回放
     private var lastAgentText = ""
     private var lastAgentKey: String? = null         // 本轮最近一条 agent 气泡（补耗时用）
@@ -663,17 +664,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     }
 
     /** ★ 修复点：只有历史回放才接收用户回显，实时发送不再重复上屏。 */
-    override fun onUserMessage(text: String) {
+    override fun onUserMessage(text: String, images: List<String>, turnId: String) {
         if (!historyMode) return
-        val k = userEchoKey
-        if (k == null) {
+        // 新的用户消息 = 新回合开始：先把上一条 agent 回复收尾，
+        // 否则历史回放里没有 onPromptDone，所有回复会被挤进同一个气泡。
+        streamingAgentKey?.let { k ->
+            _state.update { s ->
+                s.copy(items = s.items.map { item ->
+                    if (item is ChatItem.AgentBubble && item.key == k)
+                        item.copy(done = true,
+                            text = if (item.text.isEmpty()) "（本轮没有文本回复）" else item.text,
+                            model = item.model ?: acp.modelName)
+                    else item
+                })
+            }
+        }
+        streamingAgentKey = null
+        // 同一条消息的分片共享 turnId，只有同 turn 才合并到一个气泡
+        val sameTurn = userEchoKey != null && (turnId.isEmpty() || turnId == userEchoTurnId)
+        if (!sameTurn) {
             val nk = "h" + ids.incrementAndGet()
             userEchoKey = nk
-            _state.update { it.copy(items = it.items + ChatItem.UserBubble(nk, text)) }
+            userEchoTurnId = turnId
+            _state.update { it.copy(items = it.items + ChatItem.UserBubble(nk, text, time = clock(), attImages = images)) }
         } else {
             _state.update { s ->
                 s.copy(items = s.items.map { item ->
-                    if (item is ChatItem.UserBubble && item.key == k) item.copy(text = item.text + text)
+                    if (item is ChatItem.UserBubble && item.key == userEchoKey)
+                        item.copy(text = item.text + text, attImages = item.attImages + images)
                     else item
                 })
             }

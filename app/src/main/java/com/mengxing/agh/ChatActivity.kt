@@ -1390,8 +1390,9 @@ private fun formatTime(iso: String): String {
 private data class PendingAtt(
     val label: String,
     val mimeType: String,
-    val base64: String,
-    val isImage: Boolean
+    val base64: String,          // 图片/文件块 = base64；asText=true 时这里存的是提取出的纯文本
+    val isImage: Boolean,
+    val asText: Boolean = false  // 文本类附件改发文本块：base64 在弱网下又慢又容易把连接拖断
 ) {
     /** 组装成 AGH/ACP 的 ContentBlock。 */
     fun toBlock(): org.json.JSONObject = org.json.JSONObject().apply {
@@ -1399,6 +1400,9 @@ private data class PendingAtt(
             put("type", "image")
             put("data", base64)
             put("mimeType", mimeType)
+        } else if (asText) {
+            put("type", "text")
+            put("text", base64)
         } else {
             // ACP 的文件附件是 EmbeddedResource：{type:"resource", resource:{uri,mimeType,blob}}。
             // 服务端不认 type:"file"（会报 INVALID_PARAMS/ENUM），这是 0.3.7 之前文件发不出去的根因。
@@ -1430,6 +1434,19 @@ private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage:
     // 超大文件：WS 发送队列上限约 16MB，超限会直接把连接判死，这里先拦下并给明确提示
     if (bytes.size > 10 * 1024 * 1024) {
         return PendingAtt("$name（文件超过 10MB，未附加）", mime, "", isImage)
+    }
+    // 文本/文档类：提取正文后改发文本块。传 base64 在弱网（实测 2~30KB/s）下要好几分钟，
+    // 中途一抖连接就断（表现为"发送失败：连接中断"），而正文只要几 KB，秒发。
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val txt: String? = when {
+        ext == "docx" -> extractDocxText(bytes)
+        isTextyMime(mime, name) -> runCatching { String(bytes, Charsets.UTF_8) }.getOrNull()
+        else -> null
+    }
+    if (!txt.isNullOrBlank()) {
+        val clipped = if (txt.length > 2_000_000) txt.substring(0, 2_000_000) + "\n…（内容过长，已截断）" else txt
+        return PendingAtt(name, "text/plain",
+            "【附件：$name（原 ${(bytes.size + 512) / 1024}KB，已提取正文）】\n$clipped", false, asText = true)
     }
     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
     return PendingAtt(name, mime, b64, isImage)
@@ -1469,6 +1486,45 @@ private fun compressImage(cr: android.content.ContentResolver, uri: android.net.
     } catch (e: Exception) {
         null
     }
+}
+
+/** 文本类文件：直接读成正文发送（txt/md/json/代码/配置等）。 */
+private fun isTextyMime(mime: String, name: String): Boolean {
+    val m = mime.lowercase()
+    if (m.startsWith("text/")) return true
+    if (m.contains("json") || m.contains("xml") || m.contains("javascript") || m.contains("yaml") || m.contains("csv")) return true
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return ext in setOf(
+        "txt", "md", "markdown", "csv", "json", "log", "xml", "html", "htm",
+        "kt", "java", "py", "js", "ts", "tsx", "jsx", "sh", "bash", "yaml", "yml",
+        "toml", "ini", "conf", "cfg", "gradle", "properties", "sql", "go", "rs",
+        "c", "cpp", "h", "hpp", "css", "scss", "less", "vue", "swift", "bat", "env"
+    )
+}
+
+/**
+ * 把 .docx 解成纯文本（docx 就是个 zip，正文在 word/document.xml 里的 <w:t> 标签中）。
+ * 失败返回 null，回落成二进制附件发送。
+ */
+private fun extractDocxText(bytes: ByteArray): String? = try {
+    val zis = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes))
+    var xml: String? = null
+    var e = zis.nextEntry
+    while (e != null) {
+        if (e.name == "word/document.xml") { xml = String(zis.readBytes(), Charsets.UTF_8); break }
+        e = zis.nextEntry
+    }
+    zis.close()
+    if (xml == null) null else {
+        val sb = StringBuilder()
+        for (m in Regex("<w:t[^>]*>([^<]*)</w:t>").findAll(xml)) sb.append(m.groupValues[1]).append(' ')
+        sb.toString()
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", "\"").replace("&apos;", "'")
+            .replace(Regex("\\s+"), " ").trim().ifEmpty { null }
+    }
+} catch (e: Exception) {
+    null
 }
 
 private fun queryDisplayName(cr: android.content.ContentResolver, uri: android.net.Uri): String? {

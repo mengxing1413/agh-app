@@ -134,8 +134,8 @@ public class AcpClient {
                               String rawInput, String rawOutput);
         /** 权限请求：reqId 是服务端请求的 JSON-RPC id，回包必须原样带回。 */
         void onPermissionRequest(Object reqId, String title, List<PermOption> options);
-        /** 历史回放：用户消息分片（user_message_chunk）。 */
-        void onUserMessage(String text);
+        /** 历史回放：用户消息分片（user_message_chunk）。images=随消息的图片 base64；turnId=同一条消息分片的聚合标识。 */
+        void onUserMessage(String text, List<String> images, String turnId);
         /** 会话加载完成（session/load 返回）。 */
         void onSessionLoaded(String sessionId);
         void onPromptDone(String stopReason);
@@ -350,12 +350,18 @@ public class AcpClient {
     private void handleServerMessage(String method, JSONObject p, Object rpcId) {
         if (p == null) p = new JSONObject();
         if ("session/update".equals(method)) {
+            // 回合结束信号（_meta.ai.agnes.harness.turnEnd）：历史回放里没有 prompt 响应，
+            // 没有这个信号 onPromptDone 就永远不触发，所有回复会被合并进同一个气泡。
+            JSONObject _meta = p.optJSONObject("_meta");
+            JSONObject _ag = _meta == null ? null : _meta.optJSONObject("ai.agnes.harness");
+            if (_ag != null && _ag.has("turnEnd")) notifyPromptDone("end_turn");
             JSONObject u = p.optJSONObject("update");
             if (u == null) return;
             String kind = u.optString("sessionUpdate", "");
             if ("user_message_chunk".equals(kind)) {
                 String text = extractText(u);
-                if (!text.isEmpty()) notifyUserMessage(text);
+                List<String> imgs = extractImages(u);
+                if (!text.isEmpty() || !imgs.isEmpty()) notifyUserMessage(text, imgs, extractTurnId(p));
             } else if ("agent_message_chunk".equals(kind)) {
                 String text = extractText(u);
                 if (!text.isEmpty()) notifyChunk(text);
@@ -499,6 +505,37 @@ public class AcpClient {
             if (!t.isEmpty()) return t;
         }
         return update.optString("text", "");
+    }
+
+    /** 提取 content 里的图片块 base64（历史回放时用来还原缩略图）。content 可能是单对象或数组。 */
+    private List<String> extractImages(JSONObject update) {
+        List<String> out = new ArrayList<>();
+        JSONObject content = update.optJSONObject("content");
+        if (content != null) {
+            if ("image".equals(content.optString("type", ""))) {
+                String d = content.optString("data", "");
+                if (!d.isEmpty()) out.add(d);
+            }
+            return out;
+        }
+        JSONArray arr = update.optJSONArray("content");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject c = arr.optJSONObject(i);
+                if (c != null && "image".equals(c.optString("type", ""))) {
+                    String d = c.optString("data", "");
+                    if (!d.isEmpty()) out.add(d);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 同一条消息的多个分片共享 promptTurnId（_meta.ai.agnes.harness），用它做气泡聚合边界。 */
+    private String extractTurnId(JSONObject params) {
+        JSONObject meta = params.optJSONObject("_meta");
+        JSONObject ag = meta == null ? null : meta.optJSONObject("ai.agnes.harness");
+        return ag == null ? "" : ag.optString("promptTurnId", "");
     }
 
     private String toStr(Object o) {
@@ -1155,7 +1192,7 @@ public class AcpClient {
     private void notifyPermission(Object id, String ti, List<PermOption> opts) {
         main.post(() -> { if (listener != null) listener.onPermissionRequest(id, ti, opts); });
     }
-    private void notifyUserMessage(String t) { main.post(() -> { if (listener != null) listener.onUserMessage(t); }); }
+    private void notifyUserMessage(String t, List<String> imgs, String turnId) { main.post(() -> { if (listener != null) listener.onUserMessage(t, imgs, turnId); }); }
     private void notifySessionLoaded(String sid) { main.post(() -> { if (listener != null) listener.onSessionLoaded(sid); }); }
     private void notifyPromptDone(String s) { main.post(() -> { if (listener != null) listener.onPromptDone(s); }); }
     private void notifyError(String m) { main.post(() -> { if (listener != null) listener.onError(m); }); }

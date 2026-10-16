@@ -942,7 +942,7 @@ private fun UsageSheet(
     val cs = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val u = state.usage
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surface) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surfaceContainer) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -988,6 +988,9 @@ private fun UsageSheet(
             Spacer(Modifier.height(6.dp))
             UsageText("自动压缩", if (u.autoCompact) "已开启" else "已关闭")
             UsageText("完全权限", if (u.yolo) "已开启" else "已关闭")
+            // 预算状态（session.budget；服务端未返回则不显示）
+            if (state.budgetUsed >= 0 && state.budgetCap >= 0)
+                UsageText("预算", "${state.budgetUsed} / ${state.budgetCap} 点")
             if (!u.modelId.isNullOrEmpty()) UsageText("当前模型", u.modelId)
             if (u.costUsdMicros > 0) {
                 UsageText("费用", "≈ $" + java.lang.String.format(java.util.Locale.US, "%.4f", u.costUsdMicros / 1000000.0))
@@ -1074,7 +1077,7 @@ private fun SessionSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = cs.surface
+        containerColor = cs.surfaceContainer
     ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)
@@ -1398,10 +1401,14 @@ private data class PendingAtt(
     }
 }
 
-/** 从 URI 读成待发附件（base64）。 */
+/** 从 URI 读成待发附件（base64）。图片先压缩：原图 base64 可达 4~10MB，会把 WS 连接撑断。 */
 private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage: Boolean): PendingAtt {
     val cr = ctx.contentResolver
     val name = queryDisplayName(cr, uri) ?: (if (isImage) "图片" else "文件")
+    if (isImage) {
+        val packed = compressImage(cr, uri)      // 最长边 1568px + JPEG 80 → 典型 200~500KB
+        if (packed != null) return PendingAtt(name, "image/jpeg", packed, true)
+    }
     val mime = cr.getType(uri) ?: (if (isImage) "image/jpeg" else "application/octet-stream")
     val bytes = try {
         cr.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
@@ -1410,6 +1417,42 @@ private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage:
     }
     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
     return PendingAtt(name, mime, b64, isImage)
+}
+
+/**
+ * 压缩到最长边 1568px 的 JPEG(80) 并返回 base64；失败返回 null（走原图兜底）。
+ * 背景：AGH 的 WS 对单条消息有体积上限，未压缩的照片 base64 会直接把连接撑断（发送失败：连接中断）。
+ */
+private fun compressImage(cr: android.content.ContentResolver, uri: android.net.Uri): String? {
+    return try {
+        // 1) 探边界拿原始尺寸（不分配像素内存）
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cr.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        val w = bounds.outWidth; val h = bounds.outHeight
+        if (w <= 0 || h <= 0) return null
+        // 2) 采样取整（inSampleSize 只能是 2 的幂）
+        var sample = 1
+        while (maxOf(w, h) / sample > 1568 * 2) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = cr.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
+            ?: return null
+        // 3) 精缩到最长边 1568
+        val longest = maxOf(bmp.width, bmp.height)
+        val out = if (longest > 1568) {
+            val f = 1568f / longest
+            val nw = (bmp.width * f).toInt().coerceAtLeast(1)
+            val nh = (bmp.height * f).toInt().coerceAtLeast(1)
+            val s = android.graphics.Bitmap.createScaledBitmap(bmp, nw, nh, true)
+            if (s !== bmp) bmp.recycle()
+            s
+        } else bmp
+        val baos = java.io.ByteArrayOutputStream()
+        out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, baos)
+        if (out !== bmp) out.recycle() else bmp.recycle()
+        android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+    } catch (e: Exception) {
+        null
+    }
 }
 
 private fun queryDisplayName(cr: android.content.ContentResolver, uri: android.net.Uri): String? {

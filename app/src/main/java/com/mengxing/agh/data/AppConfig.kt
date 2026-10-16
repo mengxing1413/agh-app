@@ -44,6 +44,7 @@ object AppConfig {
     const val KEY_THEME = "theme"        // system / light / dark
     const val KEY_SKIN = "skin"          // green / blue / orange / violet / slate
     const val KEY_FONT = "font_scale"    // small / normal / large / xlarge
+    const val KEY_GLASS = "glass_enabled" // 玻璃质感开关（叠加在当前主题色之上，见 YunoTheme）
 
     /** 内置默认连接（默认不丢，老用户升级后仍可用）。 */
     const val DEFAULT_URL =
@@ -136,6 +137,13 @@ object AppConfig {
 
     fun fontScale(ctx: Context): String =
         prefs(ctx).getString(KEY_FONT, "normal") ?: "normal"
+
+    /** 玻璃质感开关：开启后 YunoTheme 会给面板加玻璃材质 + 按主题色铺渐变壁纸。 */
+    fun glass(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_GLASS, false)
+
+    fun setGlass(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_GLASS, on).apply()
+    }
 
     fun setString(ctx: Context, key: String, value: String) {
         prefs(ctx).edit().putString(key, value).apply()

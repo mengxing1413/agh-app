@@ -88,7 +88,7 @@ fun WorkspaceSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var adding by remember { mutableStateOf(false) }
     var newPath by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surface) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = cs.surfaceContainer) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text("选择工作区", style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold, color = cs.onSurface)

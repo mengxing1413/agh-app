@@ -75,6 +75,8 @@ data class ChatUiState(
     // —— 状态条（B 组）：模型 / 用量 / 权限 ——
     val models: List<AcpClient.ModelInfo> = emptyList(),   // 可选模型（apis.list）
     val usage: AcpClient.UsageInfo? = null,                // 当前会话用量快照
+    val budgetUsed: Int = -1,                              // 预算：已用点数（-1 = 未取到）
+    val budgetCap: Int = -1,                               // 预算：上限点数
     val yolo: Boolean = false,                             // 完全权限（免逐次审批）
     val settingsNotice: String? = null,                    // 模型/权限切换失败提示
     // —— 工作区（C 组）——
@@ -403,6 +405,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
             }
             override fun onError(msg: String?) { /* 静默 */ }
         })
+        // 顺带拉「预算状态」（session.budget）：取不到就保持 -1，不显示
+        val sid = currentSessionId
+        if (sid.isNotEmpty()) {
+            acp.fetchBudget(sid, object : AcpClient.RespCb {
+                override fun onResult(result: org.json.JSONObject) {
+                    val st = result.optJSONObject("state") ?: return
+                    _state.update {
+                        it.copy(budgetUsed = st.optInt("creditsUsed", -1),
+                            budgetCap = st.optInt("creditsCap", -1))
+                    }
+                }
+                override fun onError(msg: String?) { /* 静默 */ }
+            })
+        }
     }
 
     /** 切换会话主模型（成功后刷新用量里回显的模型名）。 */

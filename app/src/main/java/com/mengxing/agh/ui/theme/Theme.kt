@@ -7,6 +7,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -50,9 +51,7 @@ private class Skin(
     val darkBg: Color,
     val darkSurface: Color,
     val darkSurfaceVariant: Color,
-    val darkOutline: Color,
-    /** 柔光玻璃：true 时 YunoTheme 先铺一层柔和渐变「壁纸」，面板用半透明色透出它。 */
-    val glass: Boolean = false
+    val darkOutline: Color
 )
 
 private val SKINS = mapOf(
@@ -138,17 +137,54 @@ private val SKINS = mapOf(
         Color(0xFFEEF4F1), Color(0xFFFFFFFF), Color(0xFFE2EBE7), Color(0xFFD2DED9),
         Color(0xFF2D353B), Color(0xFF343F44), Color(0xFF3D484D), Color(0xFF475258)
     ),
-    // —— 柔光玻璃（参照小米澎湃 OS 4 Soft Light Glass 材质语言）———————————
-    // 面板近不透明（98%/95%）：Compose 无真·backdrop 模糊，面板一透明就会透出**底下的文字**，
-    // 造成弹窗/下拉/状态条双层文字叠字（v0.3.4 实测 bug）。玻璃感交给：渐变壁纸 + 高光边 + 极微通透。
-    "glass" to Skin(
-        Color(0xFF2F8C63), Color.White, Color(0xB3FFFFFF), Color(0xFF12301F),
-        Color(0xFF7C9F69), Color(0x99FFFFFF), Color(0xFF1C331F),
-        Color(0xFF8FC79B), Color(0xFF06281A), Color(0x33FFFFFF), Color(0xFFEAF6EE),
-        Color(0xFFA9D4B2), Color(0x2EFFFFFF), Color(0xFFDFF3E4),
-        Color(0xFFF4F3EE), Color(0xFBFFFFFF), Color(0xF2FFFFFF), Color(0x99FFFFFF),
-        Color(0xFF101216), Color(0xFB000000), Color(0xF2171A20), Color(0x4DFFFFFF),
-        glass = true
+    // —— 第二批补充（取自 dsh-theme-pack，凑满 16 款）———————————
+    "rosepine" to Skin(
+        Color(0xFFEB6F92), Color.White, Color(0xFFFBE4EA), Color(0xFF3D1A24),
+        Color(0xFFEBA0B0), Color(0xFFFBECF0), Color(0xFF4A2230),
+        Color(0xFFEB6F92), Color(0xFFFFE8EE), Color(0xFF3A1F28), Color(0xFFFFE8EE),
+        Color(0xFFF0A9BC), Color(0xFF4A2833), Color(0xFFFFE8EE),
+        Color(0xFFFDF5F7), Color(0xFFFFFFFF), Color(0xFFF6E9ED), Color(0xFFEBD8DE),
+        Color(0xFF191724), Color(0xFF1F1D2E), Color(0xFF26233A), Color(0xFF3A3550)
+    ),
+    "gruvbox" to Skin(
+        Color(0xFFB57614), Color.White, Color(0xFFF8E7BC), Color(0xFF3D2C0A),
+        Color(0xFFD79821), Color(0xFFFAEDCB), Color(0xFF4A3510),
+        Color(0xFFFABD2F), Color(0xFF3D2C0A), Color(0xFF504531), Color(0xFFFFE9A8),
+        Color(0xFFD79921), Color(0xFF5A4A30), Color(0xFFFFE9A8),
+        Color(0xFFFBF1C7), Color(0xFFFFFFFF), Color(0xFFF2E5B8), Color(0xFFE5D7A8),
+        Color(0xFF282828), Color(0xFF3C3836), Color(0xFF504945), Color(0xFF665C54)
+    ),
+    "kanagawa" to Skin(
+        Color(0xFF5A7BB5), Color.White, Color(0xFFDDE5F5), Color(0xFF1B2233),
+        Color(0xFF7E9CD8), Color(0xFFE8EEF9), Color(0xFF23293D),
+        Color(0xFF7E9CD8), Color(0xFF0F1420), Color(0xFF2A3045), Color(0xFFD9E2F5),
+        Color(0xFF957FB8), Color(0xFF363B54), Color(0xFFD9E2F5),
+        Color(0xFFF4F6FB), Color(0xFFFFFFFF), Color(0xFFE8ECF6), Color(0xFFD8DFEE),
+        Color(0xFF1F1F28), Color(0xFF2A2A37), Color(0xFF363646), Color(0xFF54546D)
+    ),
+    "solarized" to Skin(
+        Color(0xFF2076B8), Color.White, Color(0xFFD8EAF7), Color(0xFF073642),
+        Color(0xFF2AA198), Color(0xFFE3F2F0), Color(0xFF073642),
+        Color(0xFF4FB3E8), Color(0xFF03242E), Color(0xFF0F4652), Color(0xFFD6EDF3),
+        Color(0xFF2AA198), Color(0xFF17505C), Color(0xFFD6EDF3),
+        Color(0xFFFDF6E3), Color(0xFFFFFFFF), Color(0xFFF5EEDB), Color(0xFFE7E0CC),
+        Color(0xFF002B36), Color(0xFF073642), Color(0xFF0E4652), Color(0xFF1A5A66)
+    ),
+    "nightowl" to Skin(
+        Color(0xFF4A78D8), Color.White, Color(0xFFDCE6FB), Color(0xFF12203F),
+        Color(0xFF7E57C2), Color(0xFFE9E2F8), Color(0xFF1A1740),
+        Color(0xFF82AAFF), Color(0xFF0A1E38), Color(0xFF17304F), Color(0xFFDCE8FF),
+        Color(0xFFC792EA), Color(0xFF23405F), Color(0xFFE6D9FA),
+        Color(0xFFF3F7FD), Color(0xFFFFFFFF), Color(0xFFE7EFFA), Color(0xFFD6E2F2),
+        Color(0xFF011627), Color(0xFF0B2942), Color(0xFF1D3B53), Color(0xFF2C4B63)
+    ),
+    "onedark" to Skin(
+        Color(0xFF3A82C4), Color.White, Color(0xFFDBEAF8), Color(0xFF1B2A38),
+        Color(0xFF56B6C2), Color(0xFFE0F2F4), Color(0xFF1B2A38),
+        Color(0xFF61AFEF), Color(0xFF12202E), Color(0xFF22334A), Color(0xFFD7E7FA),
+        Color(0xFF56B6C2), Color(0xFF2C3E52), Color(0xFFD7E7FA),
+        Color(0xFFF6F7F9), Color(0xFFFFFFFF), Color(0xFFEAEEF2), Color(0xFFD9DFE6),
+        Color(0xFF282C34), Color(0xFF21252B), Color(0xFF333842), Color(0xFF4B5263)
     )
 )
 
@@ -168,6 +204,13 @@ private fun lightScheme(skin: Skin) = lightColorScheme(
     onSurface = Color(0xFF111827),
     surfaceVariant = skin.lightSurfaceVariant,
     onSurfaceVariant = Color(0xFF6B7280),
+    // 浮层容器（下拉菜单 / 弹窗 / 底部弹层）显式跟随皮肤：
+    // 不设的话 Material3 从出厂紫调基线派生 → 权限下拉泛蓝紫、与主题对不上（v0.3.5 实测）。
+    surfaceContainerLowest = skin.lightSurface,
+    surfaceContainerLow = skin.lightSurface,
+    surfaceContainer = skin.lightSurfaceVariant,
+    surfaceContainerHigh = skin.lightSurfaceVariant,
+    surfaceContainerHighest = skin.lightSurfaceVariant,
     outline = skin.lightOutline,
     outlineVariant = skin.lightSurfaceVariant,
     error = Color(0xFFC0392B),
@@ -190,6 +233,11 @@ private fun darkScheme(skin: Skin) = darkColorScheme(
     onSurface = Color(0xFFF2F7F4),
     surfaceVariant = skin.darkSurfaceVariant,
     onSurfaceVariant = Color(0xFF9FB3A8),
+    surfaceContainerLowest = skin.darkBg,
+    surfaceContainerLow = skin.darkSurface,
+    surfaceContainer = skin.darkSurfaceVariant,
+    surfaceContainerHigh = skin.darkSurfaceVariant,
+    surfaceContainerHighest = skin.darkSurfaceVariant,
     outline = skin.darkOutline,
     outlineVariant = skin.darkSurfaceVariant,
     error = Color(0xFFE06A6A),
@@ -238,10 +286,12 @@ fun YunoTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     skin: String = "green",
     fontScale: Float = 1.0f,
+    glass: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val s = SKINS[skin] ?: SKINS["green"]!!
-    val colors = if (darkTheme) darkScheme(s) else lightScheme(s)
+    val base = if (darkTheme) darkScheme(s) else lightScheme(s)
+    val colors = if (glass) glassScheme(base, darkTheme) else base
 
     // window 背景 / 状态栏 / 导航栏跟随主题。
     // 根因：Android 的 windowBackground 由 themes.xml 决定，只认系统深浅色
@@ -267,20 +317,13 @@ fun YunoTheme(
         shapes = YunoShapes,
         typography = scaledTypography(fontScale),
         content = {
-            if (s.glass) {
-                // 柔光玻璃：先铺一层柔和渐变「壁纸」，半透明面板/卡片透出它 —— 这就是通透柔光的来源。
-                // （真 backdrop 模糊在 Compose 单层里做不了，靠 渐变壁纸 + 半透明 + 高光边 达到同款观感）
+            if (glass) {
+                // 玻璃质感：先铺一段「按当前主题色派生」的柔光渐变壁纸，近不透明面板之间的缝隙透出它。
+                // （真 backdrop 模糊 Compose 单层做不了；面板 ≥95% 不透明才不会透出底下文字叠字）
                 Box(Modifier.fillMaxSize()) {
                     Box(
                         Modifier.matchParentSize().background(
-                            Brush.linearGradient(
-                                // 跨度拉大的三段柔光渐变（同色系：米白→青绿→蓝灰），面板之间的缝隙透出它
-                                if (darkTheme) listOf(
-                                    Color(0xFF0D0F13), Color(0xFF181E25), Color(0xFF0F141A)
-                                ) else listOf(
-                                    Color(0xFFF8F7F1), Color(0xFFECF2E9), Color(0xFFE2E9F4)
-                                )
-                            )
+                            Brush.linearGradient(glassWallpaper(s, darkTheme))
                         )
                     )
                     content()
@@ -289,6 +332,33 @@ fun YunoTheme(
         }
     )
 }
+
+/** 玻璃材质：不动主题色，只把面板换成「近不透明微透 + 高光边」（<95% 会透出底下文字，实测会叠字）。 */
+private fun glassScheme(base: ColorScheme, dark: Boolean): ColorScheme = base.copy(
+    surface = base.surface.copy(alpha = 0.98f),
+    surfaceVariant = base.surfaceVariant.copy(alpha = 0.94f),
+    outline = if (dark) Color(0x4DFFFFFF) else Color(0x99FFFFFF),
+    surfaceContainer = base.surfaceVariant.copy(alpha = 0.96f),
+    surfaceContainerHigh = base.surfaceVariant.copy(alpha = 0.96f),
+    surfaceContainerHighest = base.surfaceVariant.copy(alpha = 0.96f)
+)
+
+/** 按当前主题色派生三段柔光渐变壁纸：底色向强调色偏移 —— 每款主题各有自己的玻璃色调。 */
+private fun glassWallpaper(s: Skin, dark: Boolean): List<Color> {
+    val bg = if (dark) s.darkBg else s.lightBg
+    val tint = if (dark) s.darkPrimary else s.lightPrimary
+    return listOf(
+        mixColor(bg, tint, if (dark) 0.12f else 0.05f),
+        mixColor(bg, tint, if (dark) 0.26f else 0.17f),
+        mixColor(bg, tint, if (dark) 0.14f else 0.10f)
+    )
+}
+
+private fun mixColor(a: Color, b: Color, t: Float) = Color(
+    red = a.red + (b.red - a.red) * t,
+    green = a.green + (b.green - a.green) * t,
+    blue = a.blue + (b.blue - a.blue) * t
+)
 
 /** 全局主题：读取用户偏好（配色 / 皮肤 / 字号）后套用 YunoTheme。 */
 @Composable
@@ -302,5 +372,6 @@ fun YunoAppTheme(content: @Composable () -> Unit) {
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    YunoTheme(darkTheme = dark, skin = skin, fontScale = font, content = content)
+    YunoTheme(darkTheme = dark, skin = skin, fontScale = font,
+        glass = AppConfig.glass(ctx), content = content)
 }

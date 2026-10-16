@@ -1120,6 +1120,13 @@ public class AcpClient {
         });
     }
 
+    /** 会话预算状态（_agnes/v1/session.budget）：result.state{creditsUsed,creditsCap,...} + ledger[]。 */
+    public void fetchBudget(String sessionId, RespCb cb) {
+        JSONObject p = new JSONObject();
+        try { p.put("sessionId", sessionId); } catch (JSONException ignored) {}
+        request("_agnes/v1/session.budget", p, cb);
+    }
+
     /** 扩展模块列表（WS 方法，实测可用；params 必带 profile）。 */
     public void clientModulesList(String profile, RespCb cb) {
         JSONObject p = new JSONObject();

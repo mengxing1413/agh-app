@@ -41,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -157,6 +158,7 @@ private fun MainSettings(
     var theme by remember { mutableStateOf(AppConfig.theme(ctx)) }
     var skin by remember { mutableStateOf(AppConfig.skin(ctx)) }
     var font by remember { mutableStateOf(AppConfig.fontScale(ctx)) }
+    var glassOn by remember { mutableStateOf(AppConfig.glass(ctx)) }
 
     // 版本号动态读取，避免与 build.gradle 脱节
     val appVer = remember {
@@ -274,6 +276,12 @@ private fun MainSettings(
         GroupTitle("皮肤")
         SkinRow(skin) { k -> skin = k; AppConfig.setString(ctx, AppConfig.KEY_SKIN, k); recreate() }
 
+        Spacer(Modifier.height(8.dp))
+        OptionSwitch("玻璃质感",
+            "近不透明磨砂面板 + 按主题色铺柔光渐变壁纸（可与任意主题色组合）", glassOn) { on ->
+            glassOn = on; AppConfig.setGlass(ctx, on); recreate()
+        }
+
         GroupTitle("字号")
         OptionRow("小", "更紧凑，一屏看得更多", font == "small") {
             font = "small"; AppConfig.setString(ctx, AppConfig.KEY_FONT, font); recreate()
@@ -301,32 +309,31 @@ private fun hostOf(url: String): String {
 @Composable
 private fun SkinRow(selected: String, onPick: (String) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val basic = listOf(
+    // 16 款主题色（整合：原基础 5 款 + 社区/补充 11 款），每行 4 款；明暗双套，可与「玻璃质感」任意组合
+    val all = listOf(
         Triple("green", "豆沙绿", YunoSkinDot(Color(0xFF7C9F69))),
         Triple("blue", "海洋蓝", YunoSkinDot(Color(0xFF4A82C4))),
         Triple("orange", "暖橙", YunoSkinDot(Color(0xFFE08A3C))),
         Triple("violet", "紫罗兰", YunoSkinDot(Color(0xFF8E6BC8))),
-        Triple("slate", "石墨灰", YunoSkinDot(Color(0xFF6B7280)))
-    )
-    // 社区主题：配色取自 dsh-theme-pack（明暗双套已内置）
-    val community = listOf(
+        Triple("slate", "石墨灰", YunoSkinDot(Color(0xFF6B7280))),
         Triple("nord", "北境极光", YunoSkinDot(Color(0xFF81A1C1))),
         Triple("dracula", "德古拉", YunoSkinDot(Color(0xFFBD93F9))),
         Triple("tokyo", "东京夜", YunoSkinDot(Color(0xFF7AA2F7))),
         Triple("catppuccin", "猫布奇诺", YunoSkinDot(Color(0xFF89B4FA))),
-        Triple("everforest", "永恒森林", YunoSkinDot(Color(0xFF7FBBB3)))
+        Triple("everforest", "永恒森林", YunoSkinDot(Color(0xFF7FBBB3))),
+        Triple("rosepine", "玫瑰松", YunoSkinDot(Color(0xFFEB6F92))),
+        Triple("gruvbox", "复古木", YunoSkinDot(Color(0xFFD79921))),
+        Triple("kanagawa", "神奈川", YunoSkinDot(Color(0xFF7E9CD8))),
+        Triple("solarized", "日光", YunoSkinDot(Color(0xFF268BD2))),
+        Triple("nightowl", "夜枭", YunoSkinDot(Color(0xFF82AAFF))),
+        Triple("onedark", "单色", YunoSkinDot(Color(0xFF61AFEF)))
     )
-    // 柔光玻璃：小米澎湃 OS Soft Light Glass 风格（半透明面板 + 高光边 + 渐变壁纸打底）
-    val special = listOf(
-        Triple("glass", "柔光玻璃", YunoSkinDot(Color(0xFFA8CDBA)))
-    )
-    SkinRowLine(basic, selected, onPick)
-    Spacer(Modifier.height(6.dp))
-    SkinRowLine(community, selected, onPick)
-    Spacer(Modifier.height(6.dp))
-    SkinRowLine(special, selected, onPick)
-    Spacer(Modifier.height(4.dp))
-    Text("社区主题取自 dsh 配色；「柔光玻璃」＝小米澎湃 OS 同款通透质感，明暗双套",
+    all.chunked(4).forEach { row ->
+        SkinRowLine(row, selected, onPick)
+        Spacer(Modifier.height(4.dp))
+    }
+    Spacer(Modifier.height(2.dp))
+    Text("16 款主题色 · 明暗双套；每款都能叠加下面的「玻璃质感」",
         style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
 }
 
@@ -387,6 +394,32 @@ private fun OptionRow(title: String, desc: String, selected: Boolean, onClick: (
                 }
             }
             if (selected) Icon(Icons.Filled.Check, null, tint = cs.primary, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** 开关型选项（用于「玻璃质感」这类叠加开关）。 */
+@Composable
+private fun OptionSwitch(title: String, desc: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        color = cs.surface,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, if (checked) cs.primary else cs.outline),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+            .clip(RoundedCornerShape(14.dp)).clickable { onToggle(!checked) }
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge,
+                    color = cs.onSurface, fontWeight = FontWeight.Medium)
+                if (desc.isNotEmpty()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(desc, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+            }
+            Switch(checked = checked, onCheckedChange = { onToggle(it) })
         }
     }
 }
@@ -1224,10 +1257,34 @@ private fun ModelRow(
 // 技能 / MCP / 扩展 / 资源 / 包管理，对齐网页版设置页各分区。
 
 /** 管理条目（通用解析：尽量取 id/name/title/status，取不到就兜底显示）。 */
-private data class ManageItem(val title: String, val subtitle: String, val id: String, val raw: org.json.JSONObject)
+private data class ManageItem(
+    val title: String, val subtitle: String, val id: String,
+    val raw: org.json.JSONObject, val desc: String = ""
+)
+
+/**
+ * 管理项中文简介：AGH 服务端不给描述（只有 license/contributions 等技术字段），这里内置一份。
+ * 认不出的项留空、不硬编，避免瞎编误导。
+ */
+private val MANAGE_DESC = mapOf(
+    "@agnes/document-reader" to "文档读取：让 Agent 能读 PDF / Word / Excel 等文件",
+    "@agnes/mcp-helper" to "MCP 辅助：连接与调试 MCP 服务",
+    "@agnes/plugin-helper" to "插件辅助：插件安装与管理支持",
+    "@agnes/skill-helper" to "技能辅助：技能加载与发现",
+    "package" to "插件包内自带的技能",
+    "user-agents" to "Agnes 用户级技能目录",
+    "user-agnes" to "Agnes 用户技能目录（放 SKILL.md 即被识别）",
+    "user-claude" to "Claude 用户技能目录",
+    "user-codex" to "Codex 用户技能目录",
+    "workspace-agnes" to "当前工作区（repo）下的技能目录"
+)
+
+private fun descOf(id: String): String = MANAGE_DESC[id.lowercase()] ?: ""
 
 /** 从返回里尽量抽出条目列表（各分区字段名不一，逐个试）。 */
-private fun parseManageItems(result: org.json.JSONObject): List<ManageItem> {
+/** rootsOnly=true（资源 tab 专用）：只列「技能/资源的加载目录」，与技能 tab 的条目列表区分开。 */
+private fun parseManageItems(result: org.json.JSONObject, rootsOnly: Boolean = false): List<ManageItem> {
+    if (rootsOnly) return parseSkillRoots(result)
     val arrKeys = listOf(
         "packages", "servers", "resources", "skills", "extensions",
         "items", "entries", "list", "modules", "rows", "surfaces", "statuses"
@@ -1239,25 +1296,9 @@ private fun parseManageItems(result: org.json.JSONObject): List<ManageItem> {
         if (arr != null && arr.length() == 0) arr = null      // 空数组继续找别的键
     }
     if (arr == null) {
-        // items 为空时退化展示 skillRoots（技能/资源的根状态）等辅助结构
-        for (k in listOf("skillRoots", "skillRoot", "roots")) {
-            val alt = result.optJSONArray(k)
-            if (alt != null && alt.length() > 0) {
-                return (0 until alt.length()).mapNotNull { i ->
-                    val o = alt.optJSONObject(i) ?: return@mapNotNull null
-                    val key = o.optString("rootKey", o.optString("root", ""))
-                    val scope = o.optString("scope", "")
-                    val st = o.optString("state", "")
-                    val nm = o.optString("workspaceId", "")
-                    ManageItem(
-                        if (key.isEmpty()) "(根)" else "$key",
-                        listOf(scope, st, if (nm.isEmpty()) "" else "ws:" + nm.take(8))
-                            .filter { it.isNotEmpty() }.joinToString(" · "),
-                        key, o
-                    )
-                }
-            }
-        }
+        // items 为空时退化展示「技能加载目录」（比空列表有信息量）
+        val roots = parseSkillRoots(result)
+        if (roots.isNotEmpty()) return roots
         // 或是对象集合 {k: {...}}
         val obj = result.optJSONObject("items") ?: result.optJSONObject("data")
         if (obj != null) {
@@ -1288,7 +1329,29 @@ private fun itemFrom(fallbackId: String, o: org.json.JSONObject): ManageItem {
         true -> "已信任"; false -> if (o.has("trusted")) "未信任" else ""
     }
     val sub = listOf(ver, status, trust).filter { it.isNotEmpty() }.joinToString(" · ")
-    return ManageItem(name, sub, id, o)
+    return ManageItem(name, sub, id, o, descOf(id))
+}
+
+/** 技能/资源的「加载目录」列表（skillRoots）—— 每项带中文说明。 */
+private fun parseSkillRoots(result: org.json.JSONObject): List<ManageItem> {
+    for (k in listOf("skillRoots", "skillRoot", "roots")) {
+        val alt = result.optJSONArray(k) ?: continue
+        if (alt.length() == 0) continue
+        return (0 until alt.length()).mapNotNull { i ->
+            val o = alt.optJSONObject(i) ?: return@mapNotNull null
+            val key = o.optString("rootKey", o.optString("root", ""))
+            val scope = o.optString("scope", "")
+            val st = o.optString("state", "")
+            val nm = o.optString("workspaceId", "")
+            ManageItem(
+                if (key.isEmpty()) "(目录)" else key,
+                listOf(scope, st, if (nm.isEmpty()) "" else "ws:" + nm.take(8))
+                    .filter { it.isNotEmpty() }.joinToString(" · "),
+                key, o, descOf(key)
+            )
+        }
+    }
+    return emptyList()
 }
 
 @Composable
@@ -1308,10 +1371,16 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
         status = "加载中…"
         val cb = object : AcpClient.RespCb {
             override fun onResult(result: org.json.JSONObject) {
-                items = parseManageItems(result)
+                // 资源 tab 只列「加载目录」，技能 tab 列技能条目 —— 两者不再重复
+                items = parseManageItems(result, rootsOnly = (tab == "resources"))
                 loading = false
-                status = if (items.isEmpty()) "暂无内容（服务端该分区为空）"
-                         else "共 ${items.size} 项 · profile $profileName"
+                status = if (items.isEmpty()) {
+                    when (tab) {
+                        "skills" -> "还没技能：把 SKILL.md 放进任一技能目录即可"
+                        "resources" -> "暂无资源目录信息"
+                        else -> "暂无内容（服务端该分区为空）"
+                    }
+                } else "共 ${items.size} 项 · profile $profileName"
             }
 
             override fun onError(msg: String?) {
@@ -1392,6 +1461,19 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
             ManageTab("扩展", tab == "extensions") { tab = "extensions"; load() }
         }
 
+        Spacer(Modifier.height(8.dp))
+        // 每个分区一句人话说明（回答"这些是什么"）
+        Text(
+            when (tab) {
+                "packages" -> "AGH 已装的插件包。内置 @agnes/* 4 个是官方组件，一般不要卸载"
+                "mcp" -> "MCP 服务：给 Agent 挂外部工具 / 数据源（没配则为空）"
+                "skills" -> "Agent 可用的技能（SKILL.md）。为空＝还没放技能"
+                "resources" -> "技能 / 资源的加载目录与状态（技能放进这些目录会被识别）"
+                else -> "客户端扩展模块（界面插件）"
+            },
+            style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant
+        )
+
         Spacer(Modifier.height(10.dp))
         Text(status, style = MaterialTheme.typography.bodySmall,
             color = if (status.contains("失败")) cs.error else cs.onSurfaceVariant)
@@ -1423,6 +1505,11 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
                                 Spacer(Modifier.height(2.dp))
                                 Text(item.subtitle, style = MaterialTheme.typography.bodySmall,
                                     color = cs.onSurfaceVariant)
+                            }
+                            if (item.desc.isNotEmpty()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(item.desc, style = MaterialTheme.typography.bodySmall,
+                                    color = cs.primary)
                             }
                             if (item.id.isNotEmpty() && item.id != item.title) {
                                 Spacer(Modifier.height(2.dp))

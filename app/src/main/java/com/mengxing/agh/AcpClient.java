@@ -190,8 +190,8 @@ public class AcpClient {
         if (raw.contains("SEMANTIC_REJECTED")) {
             int i = raw.indexOf('|');
             String reason = i >= 0 ? raw.substring(i + 1) : "";
-            return if (reason.isEmpty()) "服务端语义拒绝：请检查输入内容"
-                   else "服务端语义拒绝：" + reason;
+            if (reason.isEmpty()) return "服务端语义拒绝：请检查输入内容";
+            return "服务端语义拒绝：" + reason;
         }
         if (raw.contains("CAPABILITY") || raw.contains("NOT_FOUND")) return "操作未生效：" + raw.replace('|', '·');
         return raw.replace('|', '·');

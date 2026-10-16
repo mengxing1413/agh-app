@@ -406,7 +406,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
             override fun onError(msg: String?) { /* 静默 */ }
         })
         // 顺带拉「预算状态」（session.budget）：取不到就保持 -1，不显示
-        val sid = currentSessionId
+        val sid = _state.value.currentSessionId ?: ""
         if (sid.isNotEmpty()) {
             acp.fetchBudget(sid, object : AcpClient.RespCb {
                 override fun onResult(result: org.json.JSONObject) {

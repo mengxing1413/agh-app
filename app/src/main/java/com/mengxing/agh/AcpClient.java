@@ -218,7 +218,9 @@ public class AcpClient {
 
     public AcpClient() {
         client = new OkHttpClient.Builder()
-            .readTimeout(0, TimeUnit.MILLISECONDS) // 长连接不超时
+            .readTimeout(0, TimeUnit.MILLISECONDS)   // 长连接不超时
+            .writeTimeout(0, TimeUnit.MILLISECONDS)  // 关键修复：默认 10s，弱网下发图片/文件（几百 KB~数 MB）写入会超时被判死 → “连接中断”。置 0 = 不限时，靠 pingInterval 探活。
+            .connectTimeout(20, TimeUnit.SECONDS)
             .pingInterval(25, TimeUnit.SECONDS)
             .build();
     }

@@ -1405,11 +1405,12 @@ private data class PendingAtt(
 private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage: Boolean): PendingAtt {
     val cr = ctx.contentResolver
     val name = queryDisplayName(cr, uri) ?: (if (isImage) "图片" else "文件")
-    if (isImage) {
-        val packed = compressImage(cr, uri)      // 最长边 1568px + JPEG 80 → 典型 200~500KB
+    val mime = cr.getType(uri) ?: (if (isImage) "image/jpeg" else "application/octet-stream")
+    // 图片入口，或文件入口选中的本身是图片（如 .png 截图）→ 一律压缩后再发
+    if (isImage || mime.startsWith("image/")) {
+        val packed = compressImage(cr, uri)      // 最长边 1440px + JPEG 75 → 典型 120~300KB
         if (packed != null) return PendingAtt(name, "image/jpeg", packed, true)
     }
-    val mime = cr.getType(uri) ?: (if (isImage) "image/jpeg" else "application/octet-stream")
     val bytes = try {
         cr.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
     } catch (e: Exception) {
@@ -1420,8 +1421,8 @@ private fun loadAtt(ctx: android.content.Context, uri: android.net.Uri, isImage:
 }
 
 /**
- * 压缩到最长边 1568px 的 JPEG(80) 并返回 base64；失败返回 null（走原图兜底）。
- * 背景：AGH 的 WS 对单条消息有体积上限，未压缩的照片 base64 会直接把连接撑断（发送失败：连接中断）。
+ * 压缩到最长边 1440px 的 JPEG(75) 并返回 base64；失败返回 null（走原图兜底）。
+ * 背景：手机可能处于弱网（实测上行仅 2~31 KB/s），未压缩的大图 base64 会让 WS 写入长时间阻塞。
  */
 private fun compressImage(cr: android.content.ContentResolver, uri: android.net.Uri): String? {
     return try {
@@ -1432,14 +1433,14 @@ private fun compressImage(cr: android.content.ContentResolver, uri: android.net.
         if (w <= 0 || h <= 0) return null
         // 2) 采样取整（inSampleSize 只能是 2 的幂）
         var sample = 1
-        while (maxOf(w, h) / sample > 1568 * 2) sample *= 2
+        while (maxOf(w, h) / sample > 1440 * 2) sample *= 2
         val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
         val bmp = cr.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
             ?: return null
-        // 3) 精缩到最长边 1568
+        // 3) 精缩到最长边 1440
         val longest = maxOf(bmp.width, bmp.height)
-        val out = if (longest > 1568) {
-            val f = 1568f / longest
+        val out = if (longest > 1440) {
+            val f = 1440f / longest
             val nw = (bmp.width * f).toInt().coerceAtLeast(1)
             val nh = (bmp.height * f).toInt().coerceAtLeast(1)
             val s = android.graphics.Bitmap.createScaledBitmap(bmp, nw, nh, true)
@@ -1447,7 +1448,7 @@ private fun compressImage(cr: android.content.ContentResolver, uri: android.net.
             s
         } else bmp
         val baos = java.io.ByteArrayOutputStream()
-        out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, baos)
+        out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, baos)
         if (out !== bmp) out.recycle() else bmp.recycle()
         android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
     } catch (e: Exception) {

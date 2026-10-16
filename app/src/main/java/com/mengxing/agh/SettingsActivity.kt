@@ -746,7 +746,7 @@ private fun testConnection(p: ServerProfile, cb: (Boolean, String) -> Unit) {
         override fun onToolCall(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
         override fun onToolCallUpdate(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
         override fun onPermissionRequest(reqId: Any?, title: String?, options: MutableList<AcpClient.PermOption>?) {}
-        override fun onUserMessage(text: String?) {}
+        override fun onUserMessage(text: String?, images: MutableList<String>?, turnId: String?) {}
         override fun onSessionLoaded(sid: String?) {}
         override fun onPromptDone(stopReason: String?) {}
     })
@@ -983,7 +983,7 @@ private fun ModelsScreen(ctx: Context, onBack: () -> Unit) {
             override fun onToolCall(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
             override fun onToolCallUpdate(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
             override fun onPermissionRequest(reqId: Any?, title: String?, options: MutableList<AcpClient.PermOption>?) {}
-            override fun onUserMessage(text: String?) {}
+            override fun onUserMessage(text: String?, images: MutableList<String>?, turnId: String?) {}
             override fun onSessionLoaded(sid: String?) {}
             override fun onPromptDone(stopReason: String?) {}
         })
@@ -1431,7 +1431,7 @@ private fun ManageScreen(ctx: Context, onBack: () -> Unit) {
             override fun onToolCall(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
             override fun onToolCallUpdate(id: String?, ti: String?, k: String?, s: String?, i: String?, o: String?) {}
             override fun onPermissionRequest(reqId: Any?, title: String?, options: MutableList<AcpClient.PermOption>?) {}
-            override fun onUserMessage(text: String?) {}
+            override fun onUserMessage(text: String?, images: MutableList<String>?, turnId: String?) {}
             override fun onSessionLoaded(sid: String?) {}
             override fun onPromptDone(stopReason: String?) {}
         })

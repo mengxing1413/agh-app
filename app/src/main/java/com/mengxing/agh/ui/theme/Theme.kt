@@ -139,14 +139,15 @@ private val SKINS = mapOf(
         Color(0xFF2D353B), Color(0xFF343F44), Color(0xFF3D484D), Color(0xFF475258)
     ),
     // —— 柔光玻璃（参照小米澎湃 OS 4 Soft Light Glass 材质语言）———————————
-    // 半透明面板 + 高光边 + YunoTheme 铺的柔和渐变「壁纸」→ 通透的柔光质感。
+    // 面板近不透明（98%/95%）：Compose 无真·backdrop 模糊，面板一透明就会透出**底下的文字**，
+    // 造成弹窗/下拉/状态条双层文字叠字（v0.3.4 实测 bug）。玻璃感交给：渐变壁纸 + 高光边 + 极微通透。
     "glass" to Skin(
         Color(0xFF2F8C63), Color.White, Color(0xB3FFFFFF), Color(0xFF12301F),
         Color(0xFF7C9F69), Color(0x99FFFFFF), Color(0xFF1C331F),
         Color(0xFF8FC79B), Color(0xFF06281A), Color(0x33FFFFFF), Color(0xFFEAF6EE),
         Color(0xFFA9D4B2), Color(0x2EFFFFFF), Color(0xFFDFF3E4),
-        Color(0xFFF4F3EE), Color(0xB8FFFFFF), Color(0x9CFFFFFF), Color(0x99FFFFFF),
-        Color(0xFF101216), Color(0x99000000), Color(0x85171A20), Color(0x4DFFFFFF),
+        Color(0xFFF4F3EE), Color(0xFBFFFFFF), Color(0xF2FFFFFF), Color(0x99FFFFFF),
+        Color(0xFF101216), Color(0xFB000000), Color(0xF2171A20), Color(0x4DFFFFFF),
         glass = true
     )
 )
@@ -273,10 +274,11 @@ fun YunoTheme(
                     Box(
                         Modifier.matchParentSize().background(
                             Brush.linearGradient(
+                                // 跨度拉大的三段柔光渐变（同色系：米白→青绿→蓝灰），面板之间的缝隙透出它
                                 if (darkTheme) listOf(
-                                    Color(0xFF0E1014), Color(0xFF171C22), Color(0xFF10141A)
+                                    Color(0xFF0D0F13), Color(0xFF181E25), Color(0xFF0F141A)
                                 ) else listOf(
-                                    Color(0xFFF9F8F3), Color(0xFFF0F4ED), Color(0xFFE9EEF5)
+                                    Color(0xFFF8F7F1), Color(0xFFECF2E9), Color(0xFFE2E9F4)
                                 )
                             )
                         )

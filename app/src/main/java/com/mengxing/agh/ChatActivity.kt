@@ -196,6 +196,7 @@ fun ChatScreen(vm: ChatViewModel) {
             Column {
                 StatusStrip(
                     state = state,
+                    caps = vm.caps,
                     onRequestModels = { vm.refreshModels() },
                     onPickModel = { m -> vm.selectModel(m) },
                     onOpenUsage = { vm.refreshUsage(); usageOpen = true },
@@ -205,6 +206,7 @@ fun ChatScreen(vm: ChatViewModel) {
                     value = input,
                     onValueChange = { input = it },
                     enabled = state.inputEnabled,
+                    caps = vm.caps,
                     pendingAtt = pendingAtt,
                     onAttachImage = { pickImage.launch("image/*") },
                     onAttachFile = { pickFile.launch("*/*") },
@@ -666,6 +668,7 @@ private fun InputBar(
     value: String,
     onValueChange: (String) -> Unit,
     enabled: Boolean,
+    caps: AgentCaps = AgentCaps.AGH,
     pendingAtt: List<PendingAtt> = emptyList(),
     onAttachImage: () -> Unit = {},
     onAttachFile: () -> Unit = {},
@@ -692,16 +695,18 @@ private fun InputBar(
                 Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
-                // 附件按钮：发图片 / 发文件
-                Box {
-                    IconButton(onClick = { attachMenu = true }) {
-                        Icon(Icons.Outlined.AttachFile, "添加附件", tint = cs.onSurfaceVariant)
-                    }
-                    DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
-                        DropdownMenuItem(text = { Text("📷 发图片") },
-                            onClick = { attachMenu = false; onAttachImage() })
-                        DropdownMenuItem(text = { Text("📎 发文件") },
-                            onClick = { attachMenu = false; onAttachFile() })
+                // 附件按钮：只在后端支持时显示（能力契约——nanobot 没有附件接口）
+                if (caps.image || caps.file) {
+                    Box {
+                        IconButton(onClick = { attachMenu = true }) {
+                            Icon(Icons.Outlined.AttachFile, "添加附件", tint = cs.onSurfaceVariant)
+                        }
+                        DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                            if (caps.image) DropdownMenuItem(text = { Text("📷 发图片") },
+                                onClick = { attachMenu = false; onAttachImage() })
+                            if (caps.file) DropdownMenuItem(text = { Text("📎 发文件") },
+                                onClick = { attachMenu = false; onAttachFile() })
+                        }
                     }
                 }
 
@@ -790,22 +795,27 @@ private fun AttachmentChip(att: PendingAtt, onRemove: () -> Unit) {
 @Composable
 private fun StatusStrip(
     state: ChatUiState,
+    caps: AgentCaps = AgentCaps.AGH,
     onRequestModels: () -> Unit,
     onPickModel: (AcpClient.ModelInfo) -> Unit,
     onOpenUsage: () -> Unit,
     onPickYolo: (Boolean) -> Unit
 ) {
+    // 后端没有模型/用量/权限这些能力时，整条不显示（不留空白条）
+    if (!caps.models && !caps.usage && !caps.yolo) return
     val cs = MaterialTheme.colorScheme
     Surface(color = cs.background) {
         Row(
             Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ModelChip(state, onRequestModels, onPickModel)
-            Spacer(Modifier.width(8.dp))
-            UsageChip(state.usage, onOpenUsage)
+            if (caps.models) {
+                ModelChip(state, onRequestModels, onPickModel)
+                Spacer(Modifier.width(8.dp))
+            }
+            if (caps.usage) UsageChip(state.usage, onOpenUsage)
             Spacer(Modifier.weight(1f))
-            PermChip(state.yolo, onPickYolo)
+            if (caps.yolo) PermChip(state.yolo, onPickYolo)
         }
     }
 }

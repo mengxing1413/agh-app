@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,6 +15,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.mengxing.agh.data.AppConfig
 import com.mengxing.agh.ui.theme.YunoAppTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 多 Agent 后端首页（App 主入口）。
@@ -28,6 +31,16 @@ class HomeActivity : ComponentActivity() {
             YunoAppTheme {
                 val ctx = this
                 var profiles by remember { mutableStateOf(AppConfig.loadProfiles(ctx)) }
+                var statuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+                // 后台探活：端口通即在线（不跑后端协议，通用且快）
+                LaunchedEffect(profiles) {
+                    if (profiles.isEmpty()) return@LaunchedEffect
+                    statuses = emptyMap()
+                    statuses = withContext(Dispatchers.IO) {
+                        profiles.associate { p -> p.id to if (tcpProbe(p.url)) "online" else "offline" }
+                    }
+                }
 
                 // 从设置页/对话页返回时必须重新读一遍配置——
                 // 否则在设置里新增的 Agent 不会出现在首页（只在启动时加载了一次）。
@@ -47,7 +60,7 @@ class HomeActivity : ComponentActivity() {
                         id = p.id,
                         name = p.name.ifBlank { p.url.substringAfterLast('/').ifBlank { p.url } },
                         type = p.type,
-                        status = "idle",   // 首页不谎报在线/离线：未主动连接就是"未连接"
+                        status = statuses[p.id] ?: "connecting",   // 真实探活结果（探测中显示"连接中"）
                         model = "",
                         lastActive = "",
                         emoji = p.emoji

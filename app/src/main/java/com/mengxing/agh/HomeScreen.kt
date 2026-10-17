@@ -122,10 +122,7 @@ fun HomeScreen(
     val currentAgent = agents.firstOrNull { it.id == currentAgentId } ?: agents.firstOrNull()
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            HomeBottomBar(onNewSession = onNewSession, onSettings = onSettings)
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -169,13 +166,7 @@ fun HomeScreen(
                 )
             }
 
-            // 3. 「我的 Agent」横滑区
-            Text(
-                text = "我的 Agent",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            // 3. Agent 横滑区（标题已在页面顶部，这里不重复）
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 2.dp)
@@ -247,7 +238,7 @@ private fun CurrentAgentCard(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TypeChip(
-                        text = agent.type,
+                        text = AgentCaps.displayType(agent.type),
                         container = Color.White.copy(alpha = 0.22f),
                         content = Color.White
                     )
@@ -347,7 +338,7 @@ private fun AgentMiniCard(
                 overflow = TextOverflow.Ellipsis
             )
             TypeChip(
-                text = agent.type,
+                text = AgentCaps.displayType(agent.type),
                 container = YunoGreen.copy(alpha = 0.12f),
                 content = YunoGreen
             )

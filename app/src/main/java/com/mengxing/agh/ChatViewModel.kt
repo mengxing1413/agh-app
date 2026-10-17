@@ -106,6 +106,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     private val acp = AcpClient()
     private var nano: NanobotClient? = null      // Nanobot 后端（陆吾）
     private var isNanobot = false
+    /** 当前后端的能力表：UI 只按它决定显示/隐藏入口（不在 UI 里写后端类型判断）。 */
+    var caps: AgentCaps = AgentCaps.AGH
+        private set
     private val ids = AtomicLong(0)
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -158,6 +161,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         isNanobot = p.type.equals("Nanobot", true) ||
             p.name.contains("nanobot", true) || p.name.contains("陆吾") ||
             p.url.contains("/luwu/", true) || p.url.contains(":8765") || p.url.contains("47653")
+        caps = if (isNanobot) AgentCaps.NANOBOT else AgentCaps.AGH
         if (isNanobot) {
             val n = NanobotClient(p.url, p.pass)   // Nanobot 的 token 填在密码框
             n.setListener(object : NanobotClient.Listener {

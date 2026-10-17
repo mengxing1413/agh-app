@@ -162,6 +162,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         attImages: List<String> = emptyList(),
         attachments: List<org.json.JSONObject>? = null
     ) {
+        historyMode = false   // 用户主动发送 = 退出历史回放模式（否则服务端回显会造成重复上屏）
         val t = text.trim()
         if (t.isEmpty() && attachments.isNullOrEmpty()) return
         // 收尾上一轮还没完成的"正在思考"占位（连发两条场景），避免它永远转圈
@@ -699,7 +700,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     }
 
     override fun onSessionLoaded(sessionId: String) {
-        historyMode = false
+        // 这里【不能】关 historyMode：session/load 的响应先返回，服务端的重放消息还在陆续到达
+        // （实测 LOAD_RESULT 出现在重放流中间）。在这里关掉会导致后续历史消息（含图片、用户消息）
+        // 全被丢弃、agent 回复也收不了口。改为在用户主动发送时才退出历史模式（见 send()）。
         persistSession()
         _state.update {
             // inputEnabled 必须在这里放行：首连时是 false，若不放行，

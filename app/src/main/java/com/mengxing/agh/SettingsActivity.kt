@@ -534,12 +534,12 @@ private fun EditConnectionScreen(
 ) {
     val cs = MaterialTheme.colorScheme
     val isNew = original == null
-    // 后端类型：nanobot 的地址与凭据规则都不同（不补 /__agh_ws、密码框填 token）
-    val nanoNow = preset?.type == "Nanobot" || original?.type == "Nanobot" || looksNano(name, url)
     var name by remember { mutableStateOf(original?.name ?: (preset?.title ?: "")) }
     var url by remember { mutableStateOf(original?.url ?: "") }
     var user by remember { mutableStateOf(original?.user ?: "") }
     var pass by remember { mutableStateOf(original?.pass ?: "") }
+    // 后端类型：nanobot 的地址与凭据规则都不同（不补 /__agh_ws、密码框填 token）
+    val nanoNow = preset?.type == "Nanobot" || original?.type == "Nanobot" || looksNano(name, url)
     var testing by remember { mutableStateOf(false) }
     var testMsg by remember { mutableStateOf<String?>(null) }
     var err by remember { mutableStateOf<String?>(null) }

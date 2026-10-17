@@ -156,7 +156,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         // 后端类型分流：Nanobot 的协议与 AGH/ACP 完全不同，走独立适配器。
         // 判定：type=Nanobot，或地址里带 /luwu/ 、:8765（陆吾的 nanobot 端口）。
         isNanobot = p.type.equals("Nanobot", true) ||
-            p.url.contains("/luwu/", true) || p.url.contains(":8765", true)
+            p.name.contains("nanobot", true) || p.name.contains("陆吾") ||
+            p.url.contains("/luwu/", true) || p.url.contains(":8765") || p.url.contains("47653")
         if (isNanobot) {
             val n = NanobotClient(p.url, p.pass)   // Nanobot 的 token 填在密码框
             n.setListener(object : NanobotClient.Listener {

@@ -725,8 +725,30 @@ private fun normalizeWs(input: String): String {
     return s
 }
 
-/** 轻量连接测试：连上即成功，8 秒超时。 */
+/** 轻量连接测试：连上即成功，8 秒超时。按后端类型分流（nanobot 不认 ACP 握手）。 */
 private fun testConnection(p: ServerProfile, cb: (Boolean, String) -> Unit) {
+    val isNano = p.type.equals("Nanobot", true) ||
+        p.name.contains("nanobot", true) || p.name.contains("陆吾") ||
+        p.url.contains("/luwu/", true) || p.url.contains(":8765") || p.url.contains("47653")
+    if (isNano) {
+        val n = NanobotClient(p.url, p.pass)
+        var done = false
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        fun finish(ok: Boolean, msg: String) {
+            if (done) return
+            done = true
+            try { n.close() } catch (_: Exception) { }
+            handler.post { cb(ok, msg) }
+        }
+        n.setListener(object : NanobotClient.Listener {
+            override fun onConnected(chatId: String) { finish(true, "连接成功（已建会话）") }
+            override fun onReply(text: String, done2: Boolean) { }
+            override fun onError(msg: String) { finish(false, msg) }
+        })
+        n.connect()
+        handler.postDelayed({ finish(false, "连接超时（请检查地址 / token 是否完整）") }, 8000)
+        return
+    }
     val client = AcpClient()
     var done = false
     val handler = android.os.Handler(android.os.Looper.getMainLooper())

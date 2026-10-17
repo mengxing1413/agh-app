@@ -104,6 +104,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private val acp = AcpClient()
+    private var nano: NanobotClient? = null      // Nanobot 后端（陆吾）
+    private var isNanobot = false
     private val ids = AtomicLong(0)
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -151,7 +153,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         acp.setListener(this)
         val p = AppConfig.activeProfile(app)
         connConfigId = p.id
-        acp.connect(p.url, p.user, p.pass)
+        // 后端类型分流：Nanobot 的协议与 AGH/ACP 完全不同，走独立适配器。
+        // 判定：type=Nanobot，或地址里带 /luwu/ 、:8765（陆吾的 nanobot 端口）。
+        isNanobot = p.type.equals("Nanobot", true) ||
+            p.url.contains("/luwu/", true) || p.url.contains(":8765", true)
+        if (isNanobot) {
+            val n = NanobotClient(p.url, p.pass)   // Nanobot 的 token 填在密码框
+            n.setListener(object : NanobotClient.Listener {
+                override fun onConnected(chatId: String) {
+                    _state.update {
+                        it.copy(statusText = "已连接 · 陆吾", inputEnabled = true, historyLoaded = true)
+                    }
+                }
+                override fun onReply(text: String, done: Boolean) {
+                    if (text.isNotEmpty()) onMessageChunk(text)
+                    if (done) onPromptDone("end_turn")
+                }
+                override fun onError(msg: String) { this@ChatViewModel.onError(msg) }
+            })
+            nano = n
+            n.connect()
+        } else {
+            acp.connect(p.url, p.user, p.pass)
+        }
     }
 
     // ==================== 对外操作 ====================
@@ -165,6 +189,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AcpClient.Listene
         historyMode = false   // 用户主动发送 = 退出历史回放模式（否则服务端回显会造成重复上屏）
         val t = text.trim()
         if (t.isEmpty() && attachments.isNullOrEmpty()) return
+        if (isNanobot) {
+            // Nanobot 后端：本地立即上屏 + 纯文本发送（协议只吃文本，附件暂不支持）
+            val nk = "u" + ids.incrementAndGet()
+            _state.update {
+                it.copy(items = it.items + ChatItem.UserBubble(nk, t, time = clock(), attLabels = attLabels, attImages = attImages))
+            }
+            sendStartMs = System.currentTimeMillis()
+            streamingAgentKey = null
+            lastAgentText = ""
+            nano?.send(t)
+            return
+        }
         // 收尾上一轮还没完成的"正在思考"占位（连发两条场景），避免它永远转圈
         streamingAgentKey?.let { k ->
             _state.update { s ->

@@ -11,13 +11,20 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Nanobot 后端适配器（多 Agent 后端之一）。
+ * Nanobot 后端适配器（陆吾）。
  *
- * 协议：WebSocket JSON 消息（与 AGH 的 ACP 不同）
- *   → {"type":"new_chat"}                    建会话，回 {"type":"chat_created","chat_id":"..."}
- *   → {"type":"message","chat_id":"...","content":"..."}   发消息
- *   ← {"type":"message_delta"/"message","chat_id":"...","content":"..."}  流式/完整回复
- *   ← {"type":"turn_end","chat_id":"..."}    一轮结束
+ * 协议（实测 + 对齐 Clawket 实现）：
+ *   → {"type":"new_chat"}                          可选：新建会话
+ *   → {"type":"message","chat_id":"...","content":"..."}
+ *   ← 服务端回包字段是 `event`（不是 type），事件：
+ *       ready          连接就绪，带 chat_id
+ *       attached       新建会话完成，带 chat_id
+ *       delta          流式增量（text）
+ *       reasoning_delta 思考增量
+ *       stream_end     回合结束
+ *       message        完整回复（text）
+ *       error          错误（detail）
+ *   兼容：tag = msg.event ?? msg.type
  */
 class NanobotClient(
     private val url: String,
@@ -39,53 +46,69 @@ class NanobotClient(
     private var ws: WebSocket? = null
     private var listener: Listener? = null
     private var chatId: String? = null
-    private val pending = StringBuilder()
 
     fun setListener(l: Listener) { listener = l }
+    fun getChatId(): String? = chatId
 
     fun connect() {
         val full = if (url.contains("?")) "$url&token=$token" else "$url?token=$token"
         val req = Request.Builder().url(full).build()
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(JSONObject().put("type", "new_chat").toString())
+                // nanobot 连接后会主动推 ready（带 chat_id），不需要客户端握手
             }
+
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val o = JSONObject(text)
-                    when (o.optString("type", "")) {
-                        "chat_created" -> {
-                            chatId = o.optString("chat_id", "")
-                            main.post { listener?.onConnected(chatId ?: "") }
+                    val tag = if (o.has("event")) o.optString("event", "") else o.optString("type", "")
+                    val cid = o.optString("chat_id", "")
+                    when (tag) {
+                        "ready", "attached" -> {
+                            if (cid.isNotEmpty()) chatId = cid
+                            val c = chatId ?: ""
+                            main.post { listener?.onConnected(c) }
                         }
-                        "message_delta" -> {
-                            val t = o.optString("content", "")
+                        "delta" -> {
+                            val t = o.optString("text", o.optString("content", ""))
                             if (t.isNotEmpty()) main.post { listener?.onReply(t, false) }
                         }
+                        "stream_end" -> main.post { listener?.onReply("", true) }
                         "message" -> {
-                            val t = o.optString("content", "")
+                            val t = o.optString("text", o.optString("content", ""))
                             if (t.isNotEmpty()) main.post { listener?.onReply(t, true) }
                         }
-                        "turn_end" -> main.post { listener?.onReply("", true) }
-                        "error" -> main.post { listener?.onError(o.optString("message", "未知错误")) }
+                        "error" -> {
+                            val d = o.optString("detail", o.optString("message", "未知错误"))
+                            main.post { listener?.onError(d) }
+                        }
                     }
                 } catch (e: Exception) {
                     main.post { listener?.onError("响应解析失败：" + e.message) }
                 }
             }
+
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 main.post { listener?.onError("连接失败：" + t.message) }
             }
+
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 main.post { listener?.onError("连接已关闭") }
             }
         })
     }
 
+    /** 新建会话（可选；不调用则直接用 ready 给的默认 chat_id）。 */
+    fun newChat() {
+        ws?.send(JSONObject().put("type", "new_chat").toString())
+    }
+
     fun send(text: String) {
         val cid = chatId
         if (cid.isNullOrEmpty()) { main.post { listener?.onError("尚未连接成功") }; return }
-        ws?.send(JSONObject().put("type", "message").put("chat_id", cid).put("content", text).toString())
+        ws?.send(
+            JSONObject().put("type", "message").put("chat_id", cid).put("content", text).toString()
+        )
     }
 
     fun close() {

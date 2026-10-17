@@ -94,8 +94,9 @@ class SettingsActivity : ComponentActivity() {
 @Composable
 private fun SettingsApp(onClose: () -> Unit) {
     val ctx = LocalContext.current
-    var screen by remember { mutableStateOf("main") }        // main / connections / edit
+    var screen by remember { mutableStateOf("main") }        // main / connections / platform / edit
     var editId by remember { mutableStateOf<String?>(null) } // 正在编辑的连接 id（null=新增）
+    var presetPlatform by remember { mutableStateOf<Platform?>(null) }  // 新增时选定的平台
     var profiles by remember { mutableStateOf(AppConfig.loadProfiles(ctx)) }
     var activeId by remember { mutableStateOf(AppConfig.activeId(ctx)) }
 
@@ -111,15 +112,21 @@ private fun SettingsApp(onClose: () -> Unit) {
             activeId = activeId,
             onBack = { screen = "main" },
             onSelect = { id -> AppConfig.setActiveId(ctx, id); reload() },
-            onAdd = { editId = null; screen = "edit" },
-            onEdit = { id -> editId = id; screen = "edit" },
+            onAdd = { editId = null; presetPlatform = null; screen = "platform" },
+            onEdit = { id -> editId = id; presetPlatform = null; screen = "edit" },
             onDelete = { id -> AppConfig.deleteProfile(ctx, id); reload() },
             onTest = { p, cb -> testConnection(p, cb) }
+        )
+
+        "platform" -> PlatformPickerScreen(
+            onBack = { screen = "connections" },
+            onPick = { p -> presetPlatform = p; editId = null; screen = "edit" }
         )
 
         "edit" -> EditConnectionScreen(
             ctx = ctx,
             original = profiles.firstOrNull { it.id == editId },
+            preset = presetPlatform,
             onBack = { screen = "connections" },
             onSave = { p ->
                 AppConfig.upsertProfile(ctx, p)
@@ -521,12 +528,15 @@ private fun ConnectionsScreen(
 private fun EditConnectionScreen(
     ctx: Context,
     original: ServerProfile?,
+    preset: Platform? = null,
     onBack: () -> Unit,
     onSave: (ServerProfile) -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val isNew = original == null
-    var name by remember { mutableStateOf(original?.name ?: "") }
+    // 后端类型：nanobot 的地址与凭据规则都不同（不补 /__agh_ws、密码框填 token）
+    val nanoNow = preset?.type == "Nanobot" || original?.type == "Nanobot" || looksNano(name, url)
+    var name by remember { mutableStateOf(original?.name ?: (preset?.title ?: "")) }
     var url by remember { mutableStateOf(original?.url ?: "") }
     var user by remember { mutableStateOf(original?.user ?: "") }
     var pass by remember { mutableStateOf(original?.pass ?: "") }
@@ -565,7 +575,7 @@ private fun EditConnectionScreen(
 
         OutlinedTextField(value = url, onValueChange = { url = it },
             label = { Text("服务器地址") },
-            placeholder = { Text("wss://主机:端口/__agh_ws") },
+            placeholder = { Text(preset?.hint ?: "wss://主机:端口/__agh_ws") },
             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
 
@@ -574,7 +584,7 @@ private fun EditConnectionScreen(
             OutlinedTextField(value = user, onValueChange = { user = it },
                 label = { Text("用户名") }, singleLine = true, modifier = Modifier.weight(1f))
             OutlinedTextField(value = pass, onValueChange = { pass = it },
-                label = { Text("密码") }, singleLine = true,
+                label = { Text(preset?.passLabel ?: "密码") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.weight(1f))
         }
 
@@ -600,7 +610,9 @@ private fun EditConnectionScreen(
                 onClick = {
                     val p = ServerProfile(
                         original?.id ?: UUID.randomUUID().toString(),
-                        name.ifEmpty { "未命名" }, normalizeWs(url, looksNano(name, url)), user, pass)
+                        name.ifEmpty { "未命名" }, normalizeWs(url, nanoNow), user, pass,
+                        type = original?.type ?: (preset?.type ?: "AGH"),
+                        emoji = original?.emoji ?: (preset?.emoji ?: "🤖"))
                     testing = true; testMsg = null
                     testConnection(p) { ok, msg -> testing = false; testMsg = (if (ok) "✓ " else "✗ ") + msg }
                 },
@@ -630,7 +642,9 @@ private fun EditConnectionScreen(
                 if (url.isBlank()) { err = "请填写服务器地址"; return@Button }
                 val p = ServerProfile(
                     original?.id ?: UUID.randomUUID().toString(),
-                    name.ifEmpty { "未命名" }, normalizeWs(url, looksNano(name, url)), user, pass)
+                    name.ifEmpty { "未命名" }, normalizeWs(url, nanoNow), user, pass,
+                    type = original?.type ?: (preset?.type ?: "AGH"),
+                    emoji = original?.emoji ?: (preset?.emoji ?: "🤖"))
                 onSave(p)
             },
             modifier = Modifier.fillMaxWidth()

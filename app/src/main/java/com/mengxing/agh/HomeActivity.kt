@@ -4,10 +4,14 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.mengxing.agh.data.AppConfig
 import com.mengxing.agh.ui.theme.YunoAppTheme
 
@@ -25,12 +29,25 @@ class HomeActivity : ComponentActivity() {
                 val ctx = this
                 var profiles by remember { mutableStateOf(AppConfig.loadProfiles(ctx)) }
 
+                // 从设置页/对话页返回时必须重新读一遍配置——
+                // 否则在设置里新增的 Agent 不会出现在首页（只在启动时加载了一次）。
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            profiles = AppConfig.loadProfiles(ctx)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
+
                 val agents = profiles.map { p ->
                     AgentProfile(
                         id = p.id,
                         name = p.name.ifBlank { p.url.substringAfterLast('/').ifBlank { p.url } },
                         type = p.type,
-                        status = "offline",   // 连接状态由对话页刷新；首页先展示静态
+                        status = "idle",   // 首页不谎报在线/离线：未主动连接就是"未连接"
                         model = "",
                         lastActive = "",
                         emoji = p.emoji

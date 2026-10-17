@@ -560,10 +560,11 @@ private fun statusColor(status: String): Color = when (status) {
     else -> MaterialTheme.colorScheme.outline
 }
 
-/** 状态文字：在线 / 连接中 / 离线。 */
+/** 状态文字：在线 / 连接中 / 未连接 / 离线。 */
 private fun statusLabel(status: String): String = when (status) {
     "online" -> "在线"
     "connecting" -> "连接中"
+    "idle" -> "未连接"
     else -> "离线"
 }
 

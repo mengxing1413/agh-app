@@ -600,7 +600,7 @@ private fun EditConnectionScreen(
                 onClick = {
                     val p = ServerProfile(
                         original?.id ?: UUID.randomUUID().toString(),
-                        name.ifEmpty { "未命名" }, normalizeWs(url), user, pass)
+                        name.ifEmpty { "未命名" }, normalizeWs(url, looksNano(name, url)), user, pass)
                     testing = true; testMsg = null
                     testConnection(p) { ok, msg -> testing = false; testMsg = (if (ok) "✓ " else "✗ ") + msg }
                 },
@@ -630,7 +630,7 @@ private fun EditConnectionScreen(
                 if (url.isBlank()) { err = "请填写服务器地址"; return@Button }
                 val p = ServerProfile(
                     original?.id ?: UUID.randomUUID().toString(),
-                    name.ifEmpty { "未命名" }, normalizeWs(url), user, pass)
+                    name.ifEmpty { "未命名" }, normalizeWs(url, looksNano(name, url)), user, pass)
                 onSave(p)
             },
             modifier = Modifier.fillMaxWidth()
@@ -704,8 +704,13 @@ private fun pick(o: JSONObject, vararg keys: String): String? {
     return null
 }
 
-/** 规范化成 AGH WebSocket 地址：http(s)→ws(s)，无路径则补 /__agh_ws。 */
-private fun normalizeWs(input: String): String {
+/** 判断是否 nanobot 后端（协议不同，地址规则也不同）。 */
+private fun looksNano(name: String, url: String): Boolean =
+    name.contains("nanobot", true) || name.contains("陆吾") ||
+        url.contains("/luwu/", true) || url.contains(":8765") || url.contains("47653")
+
+/** 规范化 WebSocket 地址：http(s)→ws(s)。AGH 无路径时补 /__agh_ws；nanobot 只保证末尾一个 /。 */
+private fun normalizeWs(input: String, nano: Boolean = false): String {
     var s = input.trim()
     if (s.isEmpty()) return s
     s = when {
@@ -715,6 +720,10 @@ private fun normalizeWs(input: String): String {
     }
     if (!s.startsWith("ws://") && !s.startsWith("wss://")) {
         s = "wss://$s"
+    }
+    if (nano) {
+        // nanobot 的 WebSocket 挂在根路径上，补 /__agh_ws 会握手失败（服务端回 200 而不是 101）
+        return s.trimEnd('/') + "/"
     }
     val schemeEnd = s.indexOf("://") + 3
     val afterScheme = s.substring(schemeEnd)
